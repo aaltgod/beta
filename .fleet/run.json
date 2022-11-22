@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "command",
+            "name": "cargo run",
+            "program": "cargo",
+            "args": ["run"],
+        }
+    ]
+}
