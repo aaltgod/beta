@@ -1,34 +1,50 @@
 pub mod config;
+pub mod helpers;
+
 use config::Config;
-
 use bytes::Bytes;
-use hyper::http::HeaderValue;
 use regex::Regex;
+use rand::prelude::*;
 
+use hyper::http::HeaderValue;
 use hyper::{Server, Client, Request, Response, Body, Uri};
 use hyper::service::{make_service_fn, service_fn};
 
+
 async fn change_uri(uri: Uri, host: &HeaderValue) -> Uri {
-    let re = Regex::new("([A-Z0-9]{31})=").unwrap();
+    let re = Regex::new("([A-Z0-9]{31}=)").unwrap();
+    let path = uri.path_and_query().unwrap().as_str();
+    println!("{:?}", re.captures(path));
 
     let changed_uri = Uri::builder().
         scheme("http").
-        authority(host.to_str().unwrap()).
-        path_and_query(re.replace_all(uri.path_and_query().unwrap().as_str(), "FLAG").to_string()).
-        build().
-        expect("build new uri");
+        authority(host.to_str().unwrap());
 
-    println!("{:?}", changed_uri);
-    changed_uri
+    // TODO: add flags replacement when its more 1
+    if re.captures(path).unwrap().len() == 1 {
+        let changed_path = re.replace_all(path, helpers::build_flag(true)).to_string();
+        println!("{:?}", changed_path);
+        
+        changed_uri.
+            path_and_query(changed_path).
+            build().
+            expect("build new uri")
+    } else {
+        changed_uri.
+            path_and_query(path).
+            build().
+            expect("build default uri")
+    }
 }
+
 async fn change_body(body_bytes: Bytes) -> Result<Body, hyper::Error> {
-    let re = Regex::new("([A-Z0-9]{31})%3D").unwrap();
+    let re = Regex::new("[A-Z0-9]{31}%3D").unwrap();
     if !body_bytes.is_empty(){
         let text_body = std::str::from_utf8(&body_bytes).unwrap();
         // TODO: add flag on flag replacing
         // probably do it in also url query, json;
 
-        let body = Body::from(re.replace(text_body, "FLAG").into_owned());
+        let body = Body::from(re.replace(text_body, helpers::build_flag(true)).into_owned());
         println!("{:?}", body);
         Ok(body)
     } else {
@@ -55,15 +71,25 @@ async fn do_request(config: Config, req: Request<Body>) -> Result<Response<Body>
     println!("{:?}", req.uri());
 
     let changed_req = change_request(req).await.unwrap();
-    let service_resp = Client::new().request(changed_req).await.map_err(|e| {
+    let service_resp = Client::new().
+        request(changed_req).await.map_err(|e| {
         eprintln!("{:?}", e);
         hyper::Error::from(e)
     });
 
-    let mut resp = service_resp.unwrap();
-    let _res = resp.headers_mut().insert("Privet", "ww".parse().unwrap()).is_none();
+    let resp = service_resp.unwrap();
+    let (parts, body) = resp.into_parts();
+    let new_body = Body::from(
+        change_body(
+            hyper::body::to_bytes(body)
+                .await.expect("body to bytes"))
+            .await.unwrap());
+    let mut changed_resp = Response::from_parts(parts, new_body);
+
+    let _res = changed_resp.headers_mut().
+        insert("Privet", "ww".parse().unwrap()).is_none();
     
-    Ok(resp)  
+    Ok(changed_resp)  
 }
 
 async fn run_server(config: Config) {
