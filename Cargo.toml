@@ -5,5 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-tokio = { version = "1", features = ["full"] }
 hyper = { version = "0.14.23", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+http-body-util = "0.1.0-rc.1"
+bytes = "1"
+regex = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9.14"
