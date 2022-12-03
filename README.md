@@ -1,4 +1,2 @@
 # lastochka
-Packet injector
-
-Идея заключается в своевременном обнаружение перенаправления трафика.
+Simple MITM proxy
