@@ -1,2 +1,4 @@
 /target
 *.py
+/redis-data
+/redis.conf
