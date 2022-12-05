@@ -1,0 +1,14 @@
+version: "3.2"
+
+services:
+  redis:
+    image: "redis:alpine"
+    restart: always
+    ports:
+      - "6379:2138"
+    command: redis-server --requirepass VsemPrivet
+    volumes:
+     - $PWD/redis-data:/var/lib/redis
+     - $PWD/redis.conf:/usr/local/etc/redis/redis.conf
+    
+

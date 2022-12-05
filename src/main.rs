@@ -1,10 +1,10 @@
 pub mod config;
 pub mod helpers;
+pub mod redis;
 
 use config::Config;
 use bytes::Bytes;
 use regex::Regex;
-use rand::prelude::*;
 
 use hyper::http::HeaderValue;
 use hyper::{Server, Client, Request, Response, Body, Uri};
@@ -67,7 +67,7 @@ async fn change_request(req: Request<Body>) -> Result<Request<Body>, hyper::http
     changed_request
 }
 
-async fn do_request(config: Config, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn do_request(_config: Config, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     println!("{:?}", req.uri());
 
     let changed_req = change_request(req).await.unwrap();
