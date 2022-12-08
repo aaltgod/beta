@@ -5,7 +5,7 @@ services:
     image: "redis:alpine"
     restart: always
     ports:
-      - "6379:2138"
+      - "2138:6379"
     command: redis-server --requirepass VsemPrivet
     volumes:
      - $PWD/redis-data:/var/lib/redis
