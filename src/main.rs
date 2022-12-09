@@ -1,21 +1,39 @@
 pub mod config;
 pub mod helpers;
 pub mod cache;
-pub mod server;
+pub mod proxy;
+pub mod metrics;
+pub mod hendlers;
 
 use config::Config;
 
 use hyper::{Request, Response, Body};
 use hyper::Server;
 use hyper::service::{make_service_fn, service_fn};
+use warp::Filter;
+
+use crate::metrics::register_metrics;
 
 extern crate redis;
 
-async fn lastocka(config: Config, server: server::LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+
+async fn lastochka(config: Config, server: proxy::LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     server.do_request(config, req).await
 }
 
-async fn run_server(config: Config) {
+async fn run_server() {
+    register_metrics();
+
+    let metrics_route = warp::path!("metrics").and_then(hendlers::metrics_handler);
+    
+    println!("START SERVER");
+    
+    warp::serve(metrics_route)
+        .run(([0, 0, 0, 0], 8081))
+        .await
+}
+
+async fn run_proxy(config: Config) {
     let addr = match &config.proxy_addr {
         Some(addr) => addr.parse().unwrap(),
         None => return eprintln!("Proxy address is not set"),
@@ -29,14 +47,14 @@ async fn run_server(config: Config) {
         return eprintln!("team ips are no set");
     }
 
-    let redis_client = cache::create_client("redis://:VsemPrivet@127.0.0.1:2138".to_string()).await.expect("Couldn't create redis client");
-    let lastochka_server = server::LastochkaServer::new(redis_client);
+    let redis_client = cache::create_client("redis://:VsemPrivet@127.0.0.1:2138".to_string()).await.expect("couldn't create redis client");
+    let lastochka_server = proxy::LastochkaServer::new(redis_client);
     
     let make_service = make_service_fn(move |_| { 
         let c = config.clone();
         let s = lastochka_server.clone();
         async move {
-             Ok::<_, hyper::Error>(service_fn(move |req| lastocka(c.clone(), s.clone(), req)))
+             Ok::<_, hyper::Error>(service_fn(move |req| lastochka(c.clone(), s.clone(), req)))
         }
     });
 
@@ -49,8 +67,12 @@ async fn run_server(config: Config) {
 
 #[tokio::main]
 async fn main() {
-    let config_file = std::fs::File::open("config.yaml").expect("Couldn't open config file");
-    let config = serde_yaml::from_reader(config_file).expect("Couldn't read config values");
+    let config_file = std::fs::File::open("config.yaml").expect("couldn't open config file");
+    let config = serde_yaml::from_reader(config_file).expect("couldn't read config values");
 
-    run_server(config).await;
+    tokio::spawn(async move {
+        run_server().await
+    });
+
+    run_proxy(config).await;
 }

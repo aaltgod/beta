@@ -9,6 +9,7 @@ use redis::{Client as RedisClient};
 use crate::helpers;
 use crate::Config;
 use crate::cache;
+use crate::metrics::INCOMING_REQUESTS;
 
 
 #[derive(Clone)]
@@ -81,7 +82,7 @@ impl LastochkaServer {
         }
 
     async fn change_request_body(&self, body_bytes: Bytes) -> Result<Body, hyper::Error> {
-        let re = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
+        let re = Regex::new("[A-Za-z0-9]{31}=").unwrap();
         if !body_bytes.is_empty(){
             let text_body = std::str::from_utf8(&body_bytes).unwrap();
             // TODO: add flag on flag replacing
@@ -130,7 +131,7 @@ impl LastochkaServer {
     }
 
     async fn change_response_body(&self, body_bytes: Bytes) -> Result<Body, hyper::Error> {
-        let re = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
+        let re = Regex::new("[A-Za-z0-9]{31}=").unwrap();
         if !body_bytes.is_empty(){
             let text_body = std::str::from_utf8(&body_bytes).unwrap();
             // TODO: add flag on flag replacing
@@ -191,6 +192,8 @@ impl LastochkaServer {
     }
 
     pub async fn do_request(&self, _config: Config, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+        INCOMING_REQUESTS.inc();
+        
         println!("{:?}", req.uri());
 
         let changed_req = self.change_request(req).await.unwrap();
