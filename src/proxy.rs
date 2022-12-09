@@ -15,19 +15,45 @@ use crate::metrics::INCOMING_REQUESTS;
 #[derive(Clone)]
 pub struct LastochkaServer {
     redis_client: RedisClient,
+    config: Config,
 }
 
 impl LastochkaServer {
     pub fn new(
         redis_client: RedisClient,
+        config: Config,
     ) -> Self {
-        LastochkaServer { redis_client }
+        LastochkaServer {
+             redis_client,
+             config,
+        }
     }
-    
+
+   
     async fn change_uri(&self, uri: Uri, host: &HeaderValue) -> Uri {
-        let changed_uri = Uri::builder().
+        let mut changed_uri = Uri::builder().
             scheme("http").
             authority(host.to_str().unwrap());
+        
+        let split: Vec<&str> = host.to_str().unwrap().split(":").collect();
+        let port: u32 = split[1].trim().parse().expect("coudn't parse port");
+
+        for s in self.config.settings.iter() {
+            let s_port = match s.port {
+                Some(p) => p,
+                None => 0,
+            };
+            
+            if port == s_port  {
+                let s_team_ip = match s.team_ip.clone() {
+                    Some(ip) => ip,
+                    None => split[0].to_string(),
+                };
+
+                changed_uri = changed_uri.authority(s_team_ip+":"+split[1]);
+            }
+        }
+
         let path = uri.path_and_query().unwrap().as_str(); 
         let re = Regex::new("[A-Za-z0-9]{31}=").unwrap();
         
@@ -94,7 +120,7 @@ impl LastochkaServer {
                 // TODO: add flags replacement when its more 1
                 if re.captures(text_body).unwrap().len() == 1 {
                     let flag = re.captures(text_body).unwrap().get(0).map_or("",|f| f.as_str());
-                    let new_flag = helpers::build_flag(true);
+                    let new_flag = helpers::build_flag(false);
 
                     let flag_from_cache = match cache::get_flag(&self.redis_client, flag.to_string()).await {
                         Ok(f) => f,
@@ -185,15 +211,15 @@ impl LastochkaServer {
                     .await.expect("body to bytes"))
                 .await.unwrap());
         let mut changed_resp = Response::from_parts(parts, new_body);
-        let _res = changed_resp.headers_mut().
-            insert("Privet", "ww".parse().unwrap()).is_none();
+        // let _res = changed_resp.headers_mut().
+        //     insert("Privet", "ww".parse().unwrap()).is_none();
 
         Ok(changed_resp)
     }
 
-    pub async fn do_request(&self, _config: Config, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    pub async fn do_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         INCOMING_REQUESTS.inc();
-        
+
         println!("{:?}", req.uri());
 
         let changed_req = self.change_request(req).await.unwrap();
