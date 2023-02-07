@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use prometheus::{
-    HistogramOpts, Registry, IntCounter
+    Registry, IntCounter
 };
 
 lazy_static! {

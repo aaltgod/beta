@@ -2,9 +2,10 @@ use bytes::Bytes;
 use regex::Regex;
 
 use hyper::http::HeaderValue;
-use hyper::{Client, Request, Response, Body, Uri};
+use hyper::{Client, Server, Request, Response, Body, Uri};
+use hyper::service::{make_service_fn, service_fn};
 
-use redis::{Client as RedisClient};
+use redis::Client as RedisClient;
 
 use crate::helpers;
 use crate::Config;
@@ -233,5 +234,43 @@ impl LastochkaServer {
         let changed_resp = self.change_response(resp).await.unwrap();
         
         Ok(changed_resp)  
+    }
+}
+
+
+async fn proccess(server: LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    server.do_request(req).await
+}
+
+pub async fn run_proxy(config: Config) {
+    let addr = match &config.proxy_addr {
+        Some(addr) => addr.parse().unwrap(),
+        None => return eprintln!("proxy address is not set"),
+    };
+
+    if config.service_ports.len() == 0 {
+        return eprintln!("service ports are not set") ;
+    }
+
+    if config.team_ips.len() == 0 {
+        return eprintln!("team ips are no set");
+    }
+
+    let redis_client = cache::create_client("redis://:VsemPrivet@127.0.0.1:2138".to_string()).await.expect("couldn't create redis client");
+    let lastochka_server = LastochkaServer::new(redis_client, config.clone());
+
+    let make_service = make_service_fn(move |_| { 
+        let s = lastochka_server.clone();
+        async move {
+             Ok::<_, hyper::Error>(service_fn(move |req| proccess(s.clone(), req)))
+        }
+    });
+
+    let server = Server::bind(&addr).serve(make_service);
+    
+    println!("START PROXY ON ADDRESS: {}", addr);
+
+    if let Err(e) = server.await {
+        eprintln!("Fatal err {}", e)
     }
 }
