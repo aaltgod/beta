@@ -17,3 +17,4 @@ redis = { version = "0.20.2", features = ["tokio-comp", "connection-manager"] }
 warp = "0.3.3"
 prometheus = { version = "0.9", features = ["process"] }
 lazy_static = "1.4"
+futures = "0.3"

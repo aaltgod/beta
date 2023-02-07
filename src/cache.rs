@@ -1,9 +1,10 @@
-use redis::{Client, FromRedisValue, RedisError, AsyncCommands, RedisResult, Value};
+use redis::{Client, RedisError, AsyncCommands};
 
 pub async fn create_client(redis_uri: String) -> Result<Client, RedisError> {
     Ok(Client::open(redis_uri)?)
 }
 
+// FIXME: please
 pub async fn set_flag(redis_client: &Client, key: String, value: String) -> Result<(), RedisError> {
     let mut conn = redis_client.get_tokio_connection().await.expect("set_flag conn");
     conn.set_nx(key, value).await?;

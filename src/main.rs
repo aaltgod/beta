@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod handlers;
 
 use std::net::SocketAddr;
+use futures::future;
 
 use config::Config;
 
@@ -15,11 +16,10 @@ use hyper::service::{make_service_fn, service_fn};
 use warp::Filter;
 
 use crate::metrics::register_metrics;
-
 extern crate redis;
 
 
-async fn lastochka(server: proxy::LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn proccess(server: proxy::LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     server.do_request(req).await
 }
 
@@ -33,7 +33,7 @@ async fn run_server(config: Config) {
 
     let metrics_route = warp::path!("metrics").and_then(handlers::metrics_handler);
     
-    println!("START SERVER");
+    println!("START SERVER ON ADDRESS: {}", addr);
     
     warp::serve(metrics_route)
         .run(addr)
@@ -56,15 +56,17 @@ async fn run_proxy(config: Config) {
 
     let redis_client = cache::create_client("redis://:VsemPrivet@127.0.0.1:2138".to_string()).await.expect("couldn't create redis client");
     let lastochka_server = proxy::LastochkaServer::new(redis_client, config.clone());
-    
+
     let make_service = make_service_fn(move |_| { 
         let s = lastochka_server.clone();
         async move {
-             Ok::<_, hyper::Error>(service_fn(move |req| lastochka(s.clone(), req)))
+             Ok::<_, hyper::Error>(service_fn(move |req| proccess(s.clone(), req)))
         }
     });
 
     let server = Server::bind(&addr).serve(make_service);
+    
+    println!("START PROXY ON ADDRESS: {}", addr);
 
     if let Err(e) = server.await {
         eprintln!("Fatal err {}", e)
@@ -77,11 +79,14 @@ async fn main() {
     let config: Config = serde_yaml::from_reader(config_file).expect("couldn't read config values");
     let c = config.clone();
 
-    tokio::spawn(async move {
-        let c = config.clone();
-        run_server(c).await
-    });
+    let tasks = vec![
+        tokio::spawn(async move {
+            run_server(config).await
+        }),
+        tokio::spawn(async move {
+            run_proxy(c).await;
+        })
+    ];
 
-
-    run_proxy(c.clone()).await;
+    future::join_all(tasks).await;
 }

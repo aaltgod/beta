@@ -10,5 +10,3 @@ services:
     volumes:
      - $PWD/redis-data:/var/lib/redis
      - $PWD/redis.conf:/usr/local/etc/redis/redis.conf
-    
-

@@ -479,6 +479,7 @@ name = "lastochka"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "futures",
  "http-body-util",
  "hyper",
  "lazy_static",
