@@ -18,14 +18,18 @@ async fn main() {
     let config: Config = serde_yaml::from_reader(config_file).expect("couldn't read config values");
     let c = config.clone();
 
-    let tasks = vec![
-        tokio::spawn(async move {
-            server::run_server(config).await
-        }),
-        tokio::spawn(async move {
-            proxy::run_proxy(c).await
-        })
-    ];
+    let redis_client = redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
+        .expect("couldn't create redis client");
 
-    future::join_all(tasks).await;
+    let cache = cache::Cache::new(redis_client);
+
+    future::join_all(
+        vec![
+            tokio::spawn(async move {
+                server::run_server(config).await
+            }),
+            tokio::spawn(async move {
+                proxy::run_proxy(c, cache).await
+            })
+    ]).await;
 }

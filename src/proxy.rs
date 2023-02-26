@@ -2,42 +2,38 @@ use bytes::Bytes;
 use regex::Regex;
 
 use hyper::http::HeaderValue;
-use hyper::{Client, Server, Request, Response, Body, Uri};
+use hyper::{Client, Server as HTTPServer, Request, Response, Body, Uri};
 use hyper::service::{make_service_fn, service_fn};
-
-use redis::Client as RedisClient;
 
 use crate::helpers;
 use crate::Config;
 use crate::cache;
 use crate::metrics::INCOMING_REQUESTS;
 
-
 #[derive(Clone)]
-pub struct LastochkaServer {
-    redis_client: RedisClient,
+pub struct Proxy {
+    cache: cache::Cache,
     config: Config,
 }
 
-impl LastochkaServer {
+impl Proxy {
     pub fn new(
-        redis_client: RedisClient,
+        cache: cache::Cache,
         config: Config,
     ) -> Self {
-        LastochkaServer {
-             redis_client,
+        Proxy {
+             cache,
              config,
         }
     }
 
-   
     async fn change_uri(&self, uri: Uri, host: &HeaderValue) -> Uri {
         let mut changed_uri = Uri::builder().
             scheme("http").
             authority(host.to_str().unwrap());
         
         let split: Vec<&str> = host.to_str().unwrap().split(":").collect();
-        let port: u32 = split[1].trim().parse().expect("coudn't parse port");
+        let port: u32 = split[1].trim().parse().expect("couldn't parse port");
 
         for s in self.config.settings.iter() {
             let s_port = match s.port {
@@ -66,24 +62,24 @@ impl LastochkaServer {
                 let flag = re.captures(path).unwrap().get(0).map_or("",|f| f.as_str());
                 let new_flag = helpers::build_flag(false);
                 
-                let flag_from_cache = match cache::get_flag(&self.redis_client, flag.to_string()).await {
+                let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
                     Ok(f) => f,
                     Err(_) => return changed_uri.
                                         path_and_query(path).
                                         build().
                                         expect("build default uri")
                 };
-                println!("GOT FLAG IN URI {:?}", flag_from_cache);
+                println!("GOT FLAG IN URI {:?}", flag);
                 
                 let mut changed_path: String = "".to_string();
 
                 if flag_from_cache == "".to_string() {
-                    let _result = match cache::set_flag(&self.redis_client, flag.to_string(), new_flag.clone()).await {
+                    let _result = match self.cache.set_flag(flag.to_string(), new_flag.clone()).await {
                         Ok(()) => println!("ok flag - new_flag"),
                         Err(e) => println!("{:?}", e),
                     };
         
-                    let _result = match cache::set_flag(&self.redis_client, new_flag.clone(), flag.to_string()).await {
+                    let _result = match self.cache.set_flag(new_flag.clone(), flag.to_string()).await {
                         Ok(()) => println!("ok new_flag - flag"),
                         Err(e) => println!("{:?}", e),
                     };
@@ -123,21 +119,20 @@ impl LastochkaServer {
                     let flag = re.captures(text_body).unwrap().get(0).map_or("",|f| f.as_str());
                     let new_flag = helpers::build_flag(false);
 
-                    let flag_from_cache = match cache::get_flag(&self.redis_client, flag.to_string()).await {
+                    let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
                         Ok(f) => f,
                         Err(_) => return Ok(Body::from(body_bytes)),
                     };
-                    println!("GOT REQUEST BODY FLAG {:?}", flag_from_cache);
                     
                     let mut changed_text_body: String = "".to_string();
     
                     if flag_from_cache == "".to_string() {
-                        let _result = match cache::set_flag(&self.redis_client, flag.to_string(), new_flag.clone()).await {
+                        let _result = match self.cache.set_flag(flag.to_string(), new_flag.clone()).await {
                             Ok(()) => println!("ok flag - new_flag"),
                             Err(e) => println!("{:?}", e),
                         };
             
-                        let _result = match cache::set_flag(&self.redis_client, new_flag.clone(), flag.to_string()).await {
+                        let _result = match self.cache.set_flag(new_flag.clone(), flag.to_string()).await {
                             Ok(()) => println!("ok new_flag - flag"),
                             Err(e) => println!("{:?}", e),
                         };
@@ -146,6 +141,8 @@ impl LastochkaServer {
                     } else {
                         changed_text_body = re.replace(text_body, flag_from_cache).to_string();
                     }
+
+                    println!("CHANGED REQUEST BODY: {:?}", changed_text_body);
 
                     return Ok(Body::from(changed_text_body.to_owned()))
                 }
@@ -171,14 +168,15 @@ impl LastochkaServer {
                 if re.captures(text_body).unwrap().len() == 1 {
                     let flag = re.captures(text_body).unwrap().get(0).map_or("",|f| f.as_str());
 
-                    let flag_from_cache = match cache::get_flag(&self.redis_client, flag.to_string()).await {
+                    let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
                         Ok(f) => f,
                         Err(_) => return Ok(Body::from(body_bytes)),
                     };
-                    println!("GOT RESPONSE BODY FLAG {:?}", flag_from_cache);
                     
                     if flag_from_cache != "".to_string() {
                         let changed_text_body = re.replace(text_body, flag_from_cache).to_string();
+
+                        println!("CHANGE RESPONE BODY: {:?}", changed_text_body);
 
                         return Ok(Body::from(changed_text_body.to_owned()))
                     }
@@ -198,11 +196,9 @@ impl LastochkaServer {
         let body_bytes = hyper::body::to_bytes(body).await.expect("body to bytes");
         println!("body: {:?}\n{}", body_bytes, new_uri);
 
-        let changed_request = Request::builder().
+        Request::builder().
                 uri(new_uri).
-                body(self.change_request_body(body_bytes).await.unwrap());
-
-        changed_request
+                body(self.change_request_body(body_bytes).await.unwrap())
     }
 
     async fn change_response(&self, resp: Response<Body>) -> Result<Response<Body>, hyper::http::Error> {
@@ -229,20 +225,20 @@ impl LastochkaServer {
             eprintln!("{:?}", e);
             hyper::Error::from(e)
         });
-
-        let resp = service_resp.unwrap();
-        let changed_resp = self.change_response(resp).await.unwrap();
         
-        Ok(changed_resp)  
+        Ok(
+            self.change_response(
+                service_resp.unwrap()
+            ).await.unwrap())
     }
 }
 
 
-async fn proccess(server: LastochkaServer, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    server.do_request(req).await
+async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    proxy.do_request(req).await
 }
 
-pub async fn run_proxy(config: Config) {
+pub async fn run_proxy(config: Config, cache: cache::Cache) {
     let addr = match &config.proxy_addr {
         Some(addr) => addr.parse().unwrap(),
         None => return eprintln!("proxy address is not set"),
@@ -256,17 +252,16 @@ pub async fn run_proxy(config: Config) {
         return eprintln!("team ips are no set");
     }
 
-    let redis_client = cache::create_client("redis://:VsemPrivet@127.0.0.1:2138".to_string()).await.expect("couldn't create redis client");
-    let lastochka_server = LastochkaServer::new(redis_client, config.clone());
+    let proxy = Proxy::new(cache, config.clone());
 
     let make_service = make_service_fn(move |_| { 
-        let s = lastochka_server.clone();
+        let p = proxy.clone();
         async move {
-             Ok::<_, hyper::Error>(service_fn(move |req| proccess(s.clone(), req)))
+             Ok::<_, hyper::Error>(service_fn(move |req| proccess(p.clone(), req)))
         }
     });
 
-    let server = Server::bind(&addr).serve(make_service);
+    let server = HTTPServer::bind(&addr).serve(make_service);
     
     println!("START PROXY ON ADDRESS: {}", addr);
 

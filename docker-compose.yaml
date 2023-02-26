@@ -6,7 +6,7 @@ services:
     restart: always
     ports:
       - "2138:6379"
-    command: redis-server --requirepass VsemPrivet
+    command: redis-server --requirepass SUP3RS3CRET
     volumes:
      - $PWD/redis-data:/var/lib/redis
      - $PWD/redis.conf:/usr/local/etc/redis/redis.conf

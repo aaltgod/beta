@@ -2,7 +2,6 @@ use warp::*;
 use prometheus::Encoder;
 use crate::metrics::REGISTRY;
 
-
 pub async fn metrics_handler() -> Result<impl Reply, Rejection> {
     let encoder = prometheus::TextEncoder::new();
     let mut buffer = Vec::new();

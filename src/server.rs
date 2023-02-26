@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 
 use warp::Filter;
 
-
 pub async fn run_server(config: config::Config) {
     metrics::register_metrics();
 
