@@ -1,19 +1,20 @@
-use redis::{Client, RedisError, RedisResult, AsyncCommands};
+use redis::{RedisError, AsyncCommands};
+use mobc_redis::mobc::Pool;
+use mobc_redis::RedisConnectionManager;
+
 
 #[derive(Clone)]
 pub struct Cache {
-    redis_client: Client
+    pool: Pool<RedisConnectionManager>
 }
 
 impl Cache {
-    pub fn new(redis_client: Client) -> Self {
-        Cache { redis_client }
+    pub fn new(pool: Pool<RedisConnectionManager>) -> Self {
+        Cache { pool }
     }
 
-    async fn get_conn(&self) -> RedisResult<redis::aio::Connection> {
-        self.redis_client
-            .get_tokio_connection()
-            .await
+    async fn get_conn(&self) -> Result<mobc_redis::mobc::Connection<RedisConnectionManager>, mobc_redis::mobc::Error<RedisError>> {
+        self.pool.get().await
     }
 
     // FIXME: please
@@ -36,6 +37,3 @@ impl Cache {
         }
     }
 }
-
-
-

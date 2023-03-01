@@ -7,23 +7,23 @@ use hyper::service::{make_service_fn, service_fn};
 
 use crate::helpers;
 use crate::Config;
-use crate::cache;
+use crate::cache::Cache;
 use crate::metrics::INCOMING_REQUESTS;
 
 #[derive(Clone)]
 pub struct Proxy {
-    cache: cache::Cache,
     config: Config,
+    cache: Cache,
 }
 
 impl Proxy {
     pub fn new(
-        cache: cache::Cache,
         config: Config,
+        cache: Cache,
     ) -> Self {
         Proxy {
-             cache,
-             config,
+            config,
+            cache,
         }
     }
 
@@ -238,7 +238,7 @@ async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hy
     proxy.do_request(req).await
 }
 
-pub async fn run_proxy(config: Config, cache: cache::Cache) {
+pub async fn run_proxy(config: Config, cache: Cache) {
     let addr = match &config.proxy_addr {
         Some(addr) => addr.parse().unwrap(),
         None => return eprintln!("proxy address is not set"),
@@ -252,7 +252,7 @@ pub async fn run_proxy(config: Config, cache: cache::Cache) {
         return eprintln!("team ips are no set");
     }
 
-    let proxy = Proxy::new(cache, config.clone());
+    let proxy = Proxy::new(config.clone(), cache);
 
     let make_service = make_service_fn(move |_| { 
         let p = proxy.clone();
