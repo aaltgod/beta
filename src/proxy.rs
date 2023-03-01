@@ -214,7 +214,7 @@ impl Proxy {
         Ok(changed_resp)
     }
 
-    pub async fn do_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         INCOMING_REQUESTS.inc();
 
         println!("{:?}", req.uri());
@@ -235,7 +235,7 @@ impl Proxy {
 
 
 async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    proxy.do_request(req).await
+    proxy.handle_request(req).await
 }
 
 pub async fn run_proxy(config: Config, cache: Cache) {
