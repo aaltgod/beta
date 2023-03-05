@@ -1,11 +1,10 @@
-use redis::{RedisError, AsyncCommands};
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
-
+use redis::{AsyncCommands, RedisError};
 
 #[derive(Clone)]
 pub struct Cache {
-    pool: Pool<RedisConnectionManager>
+    pool: Pool<RedisConnectionManager>,
 }
 
 impl Cache {
@@ -13,7 +12,12 @@ impl Cache {
         Cache { pool }
     }
 
-    async fn get_conn(&self) -> Result<mobc_redis::mobc::Connection<RedisConnectionManager>, mobc_redis::mobc::Error<RedisError>> {
+    async fn get_conn(
+        &self,
+    ) -> Result<
+        mobc_redis::mobc::Connection<RedisConnectionManager>,
+        mobc_redis::mobc::Error<RedisError>,
+    > {
         self.pool.get().await
     }
 
@@ -32,7 +36,7 @@ impl Cache {
             Ok(flag) => return Ok(flag),
             Err(e) => match e.kind() {
                 redis::ErrorKind::TypeError => return Ok("".to_string()),
-                _ => return Err(e)
+                _ => return Err(e),
             },
         }
     }

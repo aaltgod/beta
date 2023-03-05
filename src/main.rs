@@ -32,10 +32,10 @@ async fn main() {
     future::join_all(
         vec![
             tokio::spawn(async move {
-                server::run_server(config).await
+                server::run(config).await
             }),
             tokio::spawn(async move {
-                proxy::run_proxy(c, cache).await
+                proxy::run(c, cache).await
             })
     ]).await;
 }

@@ -1,6 +1,6 @@
-use warp::*;
-use prometheus::Encoder;
 use crate::metrics::REGISTRY;
+use prometheus::Encoder;
+use warp::*;
 
 pub async fn metrics_handler() -> Result<impl Reply, Rejection> {
     let encoder = prometheus::TextEncoder::new();
@@ -8,7 +8,7 @@ pub async fn metrics_handler() -> Result<impl Reply, Rejection> {
     if let Err(e) = encoder.encode(&REGISTRY.gather(), &mut buffer) {
         eprintln!("couldn't encode requests metrics: {:?}", e);
     }
-    
+
     let mut result = match String::from_utf8(buffer.clone()) {
         Ok(v) => v,
         Err(e) => {

@@ -1,12 +1,12 @@
-use crate::handlers;
 use crate::config;
+use crate::handlers;
 use crate::metrics;
 
 use std::net::SocketAddr;
 
 use warp::Filter;
 
-pub async fn run_server(config: config::Config) {
+pub async fn run(config: config::Config) {
     metrics::register_metrics();
 
     let addr: SocketAddr = match &config.metrics_addr {
@@ -15,10 +15,8 @@ pub async fn run_server(config: config::Config) {
     };
 
     let metrics_route = warp::path!("metrics").and_then(handlers::metrics_handler);
-    
+
     println!("START SERVER ON ADDRESS: {}", addr);
-    
-    warp::serve(metrics_route)
-        .run(addr)
-        .await
+
+    warp::serve(metrics_route).run(addr).await
 }

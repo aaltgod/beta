@@ -1,13 +1,11 @@
 use lazy_static::lazy_static;
-use prometheus::{
-    Registry, IntCounter
-};
+use prometheus::{IntCounter, Registry};
 
 lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
-
-    pub static ref INCOMING_REQUESTS: IntCounter = 
-        IntCounter::new("incoming_requests", "Incoming requests").expect("incoming metrics can't be created");
+    pub static ref INCOMING_REQUESTS: IntCounter =
+        IntCounter::new("incoming_requests", "Incoming requests")
+            .expect("incoming metrics can't be created");
 }
 
 pub fn register_metrics() {
