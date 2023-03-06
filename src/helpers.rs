@@ -1,5 +1,5 @@
-use rand::distributions::{Alphanumeric, DistString};
 use lazy_static::lazy_static;
+use rand::distributions::{Alphanumeric, DistString};
 use regex::Regex;
 
 lazy_static! {
@@ -7,8 +7,6 @@ lazy_static! {
     pub static ref ENCODED_FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
 }
 
-const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
-                         0123456789";
 const FLAG_LEN: usize = 31;
 
 pub fn build_flag(encoded: bool) -> String {
