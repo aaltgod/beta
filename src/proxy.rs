@@ -257,24 +257,23 @@ impl Proxy {
         &self,
         resp: Response<Body>,
     ) -> Result<Response<Body>, hyper::http::Error> {
-        let (parts, body) = resp.into_parts();
+        let mut resp = resp;
+        let mut headers = resp.headers().clone();
+        let body = resp.body_mut();
 
         let (new_body, new_body_length) = self
             .change_response_body(hyper::body::to_bytes(body).await.expect("body to bytes"))
             .await;
 
-        let b = new_body.unwrap();
+        headers.insert(
+            hyper::header::CONTENT_LENGTH,
+            new_body_length.to_string().parse().unwrap(),
+        );
 
-        let mut changed_resp = Response::from_parts(parts, b);
-        let _res = changed_resp
-            .headers_mut()
-            .insert(
-                "Content-Length",
-                new_body_length.to_string().parse().unwrap(),
-            )
-            .is_none();
+        *resp.headers_mut() = headers;
+        *resp.body_mut() = new_body.unwrap();
 
-        Ok(changed_resp)
+        Ok(resp)
     }
 
     pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
