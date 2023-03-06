@@ -1,4 +1,11 @@
 use rand::distributions::{Alphanumeric, DistString};
+use lazy_static::lazy_static;
+use regex::Regex;
+
+lazy_static! {
+    pub static ref FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}=").unwrap();
+    pub static ref ENCODED_FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
+}
 
 const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
                          0123456789";

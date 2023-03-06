@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use regex::Regex;
 
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
@@ -46,14 +45,17 @@ impl Proxy {
         }
 
         let path = uri.path_and_query().unwrap().as_str();
-        let re = Regex::new("[A-Za-z0-9]{31}=").unwrap();
 
-        if !re.captures(path).is_none() {
-            println!("TO CHANGE URI:  {:?}", re.captures(path));
+        if !helpers::FLAG_REGEX.captures(path).is_none() {
+            println!("TO CHANGE URI:  {:?}", helpers::FLAG_REGEX.captures(path));
 
             // TODO: add flags replacement when its more 1
-            if re.captures(path).unwrap().len() == 1 {
-                let flag = re.captures(path).unwrap().get(0).map_or("", |f| f.as_str());
+            if helpers::FLAG_REGEX.captures(path).unwrap().len() == 1 {
+                let flag = helpers::FLAG_REGEX
+                    .captures(path)
+                    .unwrap()
+                    .get(0)
+                    .map_or("", |f| f.as_str());
                 let new_flag = helpers::build_flag(false);
 
                 let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
@@ -88,9 +90,11 @@ impl Proxy {
                         Err(e) => println!("{:?}", e),
                     };
 
-                    changed_path = re.replace_all(path, new_flag).to_string();
+                    changed_path = helpers::FLAG_REGEX.replace_all(path, new_flag).to_string();
                 } else {
-                    changed_path = re.replace_all(path, flag_from_cache).to_string();
+                    changed_path = helpers::FLAG_REGEX
+                        .replace_all(path, flag_from_cache)
+                        .to_string();
                 }
 
                 println!("CHANGED URI:  {:?}", changed_path);
@@ -109,23 +113,27 @@ impl Proxy {
     }
 
     async fn change_request_body(&self, body_bytes: Bytes) -> Result<Body, hyper::Error> {
-        let re = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
         if !body_bytes.is_empty() {
             let text_body = std::str::from_utf8(&body_bytes).unwrap();
             // TODO: add flag on flag replacing
             // probably do it in also url query, json;
 
-            if !re.captures(text_body).is_none() {
+            if !helpers::ENCODED_FLAG_REGEX.captures(text_body).is_none() {
                 println!("TO CHANGE REQUEST BODY: {:?}", text_body);
 
                 // TODO: add flags replacement when its more 1
-                if re.captures(text_body).unwrap().len() == 1 {
-                    let flag = re
+                if helpers::ENCODED_FLAG_REGEX
+                    .captures(text_body)
+                    .unwrap()
+                    .len()
+                    == 1
+                {
+                    let flag = helpers::ENCODED_FLAG_REGEX
                         .captures(text_body)
                         .unwrap()
                         .get(0)
                         .map_or("", |f| f.as_str());
-                    let new_flag = helpers::build_flag(false);
+                    let new_flag = helpers::build_flag(true);
 
                     let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
                         Ok(f) => f,
@@ -153,14 +161,22 @@ impl Proxy {
                             Err(e) => println!("{:?}", e),
                         };
 
-                        changed_text_body = re.replace(text_body, new_flag).to_string();
+                        changed_text_body = helpers::ENCODED_FLAG_REGEX
+                            .replace(text_body, new_flag)
+                            .to_string();
                     } else {
-                        changed_text_body = re.replace(text_body, flag_from_cache).to_string();
+                        changed_text_body = helpers::ENCODED_FLAG_REGEX
+                            .replace(text_body, flag_from_cache)
+                            .to_string();
                     }
+
+                    let chunks: Vec<Result<_, std::io::Error>> =
+                        vec![Ok(changed_text_body.clone())];
+                    let stream = futures::stream::iter(chunks);
 
                     println!("CHANGED REQUEST BODY: {:?}", changed_text_body);
 
-                    return Ok(Body::from(changed_text_body.to_owned()));
+                    return Ok(Body::wrap_stream(stream));
                 }
             }
 
@@ -177,14 +193,13 @@ impl Proxy {
 
             // TODO: add flag on flag replacing
             // probably do it in also url query, json;
-            let re = Regex::new("[A-Za-z0-9]{31}=").unwrap();
 
-            if !re.captures(text_body).is_none() {
+            if !helpers::FLAG_REGEX.captures(text_body).is_none() {
                 println!("TO CHANGE RESPONSE BODY: {:?}", text_body);
 
                 // TODO: add flags replacement when its more 1
-                if re.captures(text_body).unwrap().len() == 1 {
-                    let flag = re
+                if helpers::FLAG_REGEX.captures(text_body).unwrap().len() == 1 {
+                    let flag = helpers::FLAG_REGEX
                         .captures(text_body)
                         .unwrap()
                         .get(0)
@@ -196,7 +211,9 @@ impl Proxy {
                     };
 
                     if flag_from_cache != "".to_string() {
-                        let changed_text_body = re.replace(text_body, flag_from_cache).to_string();
+                        let changed_text_body = helpers::FLAG_REGEX
+                            .replace(text_body, flag_from_cache)
+                            .to_string();
 
                         println!("CHANGED RESPONE BODY: {:?}", changed_text_body);
 
@@ -218,15 +235,22 @@ impl Proxy {
         &self,
         req: Request<Body>,
     ) -> Result<Request<Body>, hyper::http::Error> {
-        let (parts, body) = req.into_parts();
-        let new_host = parts.headers.get("host").unwrap();
-        let new_uri = self.change_uri(parts.uri, new_host).await;
-        let body_bytes = hyper::body::to_bytes(body).await.expect("body to bytes");
-        println!("body: {:?}\n{}", body_bytes, new_uri);
+        dbg!(&req.body());
+        let mut req = req;
+        let headers = req.headers().clone();
+        let uri = req.uri().clone();
+        let body = req.body_mut();
 
-        Request::builder()
-            .uri(new_uri)
-            .body(self.change_request_body(body_bytes).await.unwrap())
+        let body_bytes = hyper::body::to_bytes(body)
+            .await
+            .expect("change request body bytes");
+
+        *req.body_mut() = self.change_request_body(body_bytes.clone()).await.unwrap();
+        *req.uri_mut() = self.change_uri(uri, headers.get("host").unwrap()).await;
+
+        dbg!(&req);
+
+        Ok(req)
     }
 
     async fn change_response(

@@ -19,3 +19,4 @@ prometheus = { version = "0.9", features = ["process"] }
 lazy_static = "1.4"
 futures = "0.3"
 mobc-redis = "0.8.0"
+futures-util = "0.3.26"
