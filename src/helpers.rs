@@ -20,3 +20,7 @@ pub fn build_flag(encoded: bool) -> String {
         flag + "="
     }
 }
+
+pub fn contains_flag(text: &str) -> bool {
+    return !FLAG_REGEX.captures(text).is_none()
+}
