@@ -178,40 +178,31 @@ impl Proxy {
             let text_body = std::str::from_utf8(&body_bytes).unwrap();
             let body_bytes_length = body_bytes.clone().len();
 
-            // TODO: add flag on flag replacing
-            // probably do it in also url query, json;
             if helpers::contains_flag(text_body) {
                 println!("TO CHANGE RESPONSE BODY: {:?}", text_body);
 
-                // TODO: add flags replacement when its more 1
-                let found_flags = FLAG_REGEX.captures(text_body).unwrap();
+                let mut result_body = text_body.to_string();
 
-                dbg!(&found_flags);
-
-                if found_flags.len() == 1 {
-                    let flag = FLAG_REGEX
-                        .captures(text_body)
-                        .unwrap()
-                        .get(0)
-                        .map_or("", |f| f.as_str());
-
-                    let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
+                for flag in FLAG_REGEX.find_iter(text_body) {
+                    let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await
+                    {
                         Ok(f) => f,
                         Err(_) => return (Ok(Body::from(body_bytes)), body_bytes_length),
                     };
 
-                    if flag_from_cache != "".to_string() {
-                        let changed_text_body =
-                            FLAG_REGEX.replace(text_body, flag_from_cache).to_string();
-
-                        println!("CHANGED RESPONE BODY: {:?}", changed_text_body);
-
-                        return (
-                            Ok(Body::from(changed_text_body.to_owned())),
-                            changed_text_body.len(),
-                        );
+                    if flag_from_cache.len() != 0 {
+                        result_body = result_body
+                            .replace(flag.as_str(), flag_from_cache.as_str())
+                            .to_string();
+                    } else {
+                        println!("couldn't find flag: {:?}", flag)
                     }
                 }
+
+                println!("CHANGED RESPONE BODY: {:?}", result_body);
+
+                // TODO: add Full, Empty, Stream
+                return (Ok(Body::from(result_body.clone())), result_body.len());
             }
 
             (Ok(Body::from(body_bytes)), body_bytes_length)
@@ -224,7 +215,7 @@ impl Proxy {
         &self,
         req: Request<Body>,
     ) -> Result<Request<Body>, hyper::http::Error> {
-        dbg!(&req);
+        dbg!("REQ", &req);
 
         let mut req = req;
         let headers = req.headers().clone();
@@ -238,7 +229,7 @@ impl Proxy {
         *req.body_mut() = self.change_request_body(body_bytes).await.unwrap();
         *req.uri_mut() = self.change_uri(uri, headers.get("host").unwrap()).await;
 
-        dbg!(&req);
+        dbg!("CHANGED RESP", &req);
 
         Ok(req)
     }
@@ -247,6 +238,8 @@ impl Proxy {
         &self,
         resp: Response<Body>,
     ) -> Result<Response<Body>, hyper::http::Error> {
+        dbg!("RESP", &resp);
+
         let mut resp = resp;
         let mut headers = resp.headers().clone();
         let body = resp.body_mut();
@@ -263,6 +256,8 @@ impl Proxy {
         );
 
         *resp.headers_mut() = headers;
+
+        dbg!("CHANGED RESP", &resp);
 
         Ok(resp)
     }
