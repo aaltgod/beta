@@ -7,7 +7,7 @@ use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 use crate::cache::Cache;
 use crate::helpers;
 use crate::helpers::{ENCODED_FLAG_REGEX, FLAG_REGEX};
-use crate::metrics::INCOMING_REQUESTS;
+use crate::metrics::{INCOMING_REQUEST_COUNTER, TARGET_SERVICE_ERROR_COUNTER};
 use crate::Config;
 
 #[derive(Clone)]
@@ -263,13 +263,21 @@ impl Proxy {
     }
 
     pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-        INCOMING_REQUESTS.inc();
+        INCOMING_REQUEST_COUNTER.inc();
 
         println!("{:?}", req.uri());
 
         let changed_req = self.change_request(req).await.unwrap();
+        let changed_req_headers = changed_req.headers().clone();
         let service_resp = Client::new().request(changed_req).await.map_err(|e| {
-            eprintln!("{:?}", e);
+            let host = changed_req_headers.get("host").unwrap();
+
+            eprintln!("Service with host: `{:?}` returns {:?}", host, e);
+
+            TARGET_SERVICE_ERROR_COUNTER
+                .with_label_values(&[host.to_str().unwrap()])
+                .inc();
+
             hyper::Error::from(e)
         });
 
