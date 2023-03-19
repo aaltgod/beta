@@ -6,7 +6,7 @@ use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 
 use crate::cache::Cache;
 use crate::helpers;
-use crate::helpers::{ENCODED_FLAG_REGEX, FLAG_REGEX};
+use crate::helpers::FLAG_REGEX;
 use crate::metrics::{INCOMING_REQUEST_COUNTER, TARGET_SERVICE_ERROR_COUNTER};
 use crate::Config;
 
@@ -48,11 +48,12 @@ impl Proxy {
         let path = uri.path_and_query().unwrap().as_str();
 
         if helpers::contains_flag(path) {
-            println!("TO CHANGE URI:  {:?}", FLAG_REGEX.captures(path));
+            println!("TO CHANGE URI:  {:?}", FLAG_REGEX.clone().captures(path));
 
             // TODO: add flags replacement when its more 1
-            if FLAG_REGEX.captures(path).unwrap().len() == 1 {
+            if FLAG_REGEX.clone().captures(path).unwrap().len() == 1 {
                 let flag = FLAG_REGEX
+                    .clone()
                     .captures(path)
                     .unwrap()
                     .get(0)
@@ -91,9 +92,12 @@ impl Proxy {
                         Err(e) => println!("{:?}", e),
                     };
 
-                    changed_path = FLAG_REGEX.replace_all(path, new_flag).to_string();
+                    changed_path = FLAG_REGEX.clone().replace_all(path, new_flag).to_string();
                 } else {
-                    changed_path = FLAG_REGEX.replace_all(path, flag_from_cache).to_string();
+                    changed_path = FLAG_REGEX
+                        .clone()
+                        .replace_all(path, flag_from_cache)
+                        .to_string();
                 }
 
                 println!("CHANGED URI:  {:?}", changed_path);
@@ -120,7 +124,7 @@ impl Proxy {
 
                 let mut result_body = text_body.to_string();
 
-                for flag in FLAG_REGEX.find_iter(text_body) {
+                for flag in FLAG_REGEX.clone().find_iter(text_body) {
                     let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await
                     {
                         Ok(f) => f,
@@ -183,7 +187,7 @@ impl Proxy {
 
                 let mut result_body = text_body.to_string();
 
-                for flag in FLAG_REGEX.find_iter(text_body) {
+                for flag in FLAG_REGEX.clone().find_iter(text_body) {
                     let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await
                     {
                         Ok(f) => f,

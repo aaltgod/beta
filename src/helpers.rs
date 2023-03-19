@@ -22,5 +22,5 @@ pub fn build_flag(encoded: bool) -> String {
 }
 
 pub fn contains_flag(text: &str) -> bool {
-    return !FLAG_REGEX.captures(text).is_none()
+    return !FLAG_REGEX.clone().captures(text).is_none();
 }
