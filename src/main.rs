@@ -16,8 +16,7 @@ extern crate redis;
 
 #[tokio::main]
 async fn main() {
-    let config_file = std::fs::File::open("config.yaml").expect("couldn't open config file");
-    let config: Config = serde_yaml::from_reader(config_file).expect("couldn't read config values");
+    let config = Config::build();
     let c = config.clone();
 
     let redis_client = redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())

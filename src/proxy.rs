@@ -330,18 +330,7 @@ async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hy
 }
 
 pub async fn run(config: Config, cache: Cache) {
-    let addr = match &config.proxy_addr {
-        Some(addr) => addr.parse().unwrap(),
-        None => return eprintln!("proxy address is not set"),
-    };
-
-    if config.service_ports.len() == 0 {
-        return eprintln!("service ports are not set");
-    }
-
-    if config.team_ips.len() == 0 {
-        return eprintln!("team ips are no set");
-    }
+    let addr = config.clone().proxy_addr.unwrap().parse().unwrap();
 
     let proxy = Proxy::new(config.clone(), cache);
 
