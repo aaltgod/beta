@@ -1,10 +1,10 @@
 proxy_addr: 0.0.0.0:1337
 metrics_addr: 0.0.0.0:8989
 
-service_ports: [3444, 3445, 3446]
+service_ports: [ 3444, 3445, 3446 ]
 
-team_ips: [10.0.12.23, 10.0.12.24, 10.0.12.23]
+team_ips: [ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]
 
-settings:
-  - {port: 4556, team_ip: 127.0.0.1}
-  - {port: 4555, team_ip: 10.0.13.23}
+targets:
+    - { port: 4556, team_ip: 127.0.0.1 }
+    - { port: 4555, team_ip: 10.0.13.23 }

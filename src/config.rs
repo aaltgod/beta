@@ -6,11 +6,11 @@ pub struct Config {
     pub metrics_addr: Option<String>,
     pub service_ports: Vec<u32>,
     pub team_ips: Vec<String>,
-    pub settings: Vec<Setting>,
+    pub targets: Vec<Target>,
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
-pub struct Setting {
+pub struct Target {
     pub port: Option<u32>,
     pub team_ip: Option<String>,
 }

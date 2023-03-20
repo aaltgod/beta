@@ -7,7 +7,10 @@ use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 use crate::cache::Cache;
 use crate::helpers;
 use crate::helpers::FLAG_REGEX;
-use crate::metrics::{INCOMING_REQUEST_COUNTER, TARGET_SERVICE_ERROR_COUNTER};
+use crate::metrics::{
+    INCOMING_REQUEST_COUNTER, PROCESSED_REQUEST_COUNTER, PROCESSED_RESPONSE_COUNTER,
+    TARGET_SERVICE_ERROR_COUNTER,
+};
 use crate::Config;
 
 #[derive(Clone)]
@@ -22,53 +25,56 @@ impl Proxy {
     }
 
     async fn change_uri(&self, uri: Uri, host: &HeaderValue) -> Uri {
-        let mut changed_uri = Uri::builder()
-            .scheme("http")
-            .authority(host.to_str().unwrap());
+        let host = match host.to_str() {
+            Ok(res) => res,
+            Err(_) => return uri,
+        };
 
-        let split: Vec<&str> = host.to_str().unwrap().split(":").collect();
-        let port: u32 = split[1].trim().parse().expect("couldn't parse port");
+        let mut changed_uri = Uri::builder().scheme("http").authority(host);
 
-        for s in self.config.settings.iter() {
-            let s_port = match s.port {
+        let split: Vec<&str> = host.split(":").collect();
+        let port: u32 = match split[1].trim().parse() {
+            Ok(res) => res,
+            Err(_) => return uri,
+        };
+
+        for target in self.config.targets.iter() {
+            let target_port = match target.port {
                 Some(p) => p,
                 None => 0,
             };
 
-            if port == s_port {
-                let s_team_ip = match s.team_ip.clone() {
+            if port == target_port {
+                let target_team_ip = match target.team_ip.clone() {
                     Some(ip) => ip,
                     None => split[0].to_string(),
                 };
 
-                changed_uri = changed_uri.authority(s_team_ip + ":" + split[1]);
+                changed_uri = changed_uri.authority(target_team_ip + ":" + split[1]);
             }
         }
 
-        let path = uri.path_and_query().unwrap().as_str();
+        let path = match uri.path_and_query() {
+            Some(res) => res.as_str(),
+            None => return uri,
+        };
 
         if helpers::contains_flag(path) {
             println!("TO CHANGE URI:  {:?}", FLAG_REGEX.clone().captures(path));
 
-            // TODO: add flags replacement when its more 1
-            if FLAG_REGEX.clone().captures(path).unwrap().len() == 1 {
-                let flag = FLAG_REGEX
-                    .clone()
-                    .captures(path)
-                    .unwrap()
-                    .get(0)
-                    .map_or("", |f| f.as_str());
-                let new_flag = helpers::build_flag(false);
+            // safely unwrap
+            let captures = FLAG_REGEX.clone().captures(path).unwrap();
 
+            // TODO: add flags replacement when its more 1
+            if captures.len() == 1 {
+                // FIXME: extra trip to redis if f == ""
+                let flag = captures.get(0).map_or("", |f| f.as_str());
+                let new_flag = helpers::build_flag(false);
                 let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
                     Ok(f) => f,
-                    Err(_) => {
-                        return changed_uri
-                            .path_and_query(path)
-                            .build()
-                            .expect("build default uri")
-                    }
+                    Err(_) => return uri,
                 };
+
                 println!("GOT FLAG IN URI {:?}", flag);
 
                 let mut changed_path: String = "".to_string();
@@ -79,8 +85,11 @@ impl Proxy {
                         .set_flag(flag.to_string(), new_flag.clone())
                         .await
                     {
-                        Ok(()) => println!("ok flag - new_flag"),
-                        Err(e) => println!("{:?}", e),
+                        Ok(()) => println!("OK set: flag - new_flag"),
+                        Err(e) => {
+                            eprintln!("FAIL set flag - new_flag: {:?}", e);
+                            return uri;
+                        }
                     };
 
                     let _result = match self
@@ -88,8 +97,11 @@ impl Proxy {
                         .set_flag(new_flag.clone(), flag.to_string())
                         .await
                     {
-                        Ok(()) => println!("ok new_flag - flag"),
-                        Err(e) => println!("{:?}", e),
+                        Ok(()) => eprintln!("OK set new_flag - flag"),
+                        Err(e) => {
+                            eprintln!("FAIL set new_flag - flag: {:?}", e);
+                            return uri;
+                        }
                     };
 
                     changed_path = FLAG_REGEX.clone().replace_all(path, new_flag).to_string();
@@ -102,17 +114,27 @@ impl Proxy {
 
                 println!("CHANGED URI:  {:?}", changed_path);
 
-                return changed_uri
-                    .path_and_query(changed_path)
-                    .build()
-                    .expect("build new uri");
-            };
-        }
+                let result = match changed_uri.path_and_query(changed_path).build() {
+                    Ok(res) => res,
+                    Err(e) => {
+                        eprintln!("fail build changed_uri with changed_path: {:?}", e);
+                        uri
+                    }
+                };
 
-        changed_uri
-            .path_and_query(path)
-            .build()
-            .expect("build default uri")
+                return result;
+            };
+        };
+
+        let result = match changed_uri.path_and_query(path).build() {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("fail build changed_uri with path: {:?}", e);
+                uri
+            }
+        };
+
+        result
     }
 
     async fn change_request_body(&self, body_bytes: Bytes) -> Result<Body, hyper::Error> {
@@ -215,10 +237,7 @@ impl Proxy {
         }
     }
 
-    async fn change_request(
-        &self,
-        req: Request<Body>,
-    ) -> Result<Request<Body>, hyper::http::Error> {
+    async fn change_request(&self, req: Request<Body>) -> Request<Body> {
         dbg!("REQ", &req);
 
         let mut req = req;
@@ -226,44 +245,61 @@ impl Proxy {
         let uri = req.uri().clone();
         let body = req.body_mut();
 
-        let body_bytes = hyper::body::to_bytes(body)
-            .await
-            .expect("change request body bytes");
+        let body_bytes = match hyper::body::to_bytes(body).await {
+            Ok(res) => res,
+            Err(_) => return req,
+        };
 
-        *req.body_mut() = self.change_request_body(body_bytes).await.unwrap();
-        *req.uri_mut() = self.change_uri(uri, headers.get("host").unwrap()).await;
+        let changed_request_body = match self.change_request_body(body_bytes).await {
+            Ok(res) => res,
+            Err(_) => return req,
+        };
+
+        let host = match headers.get("host") {
+            Some(res) => res,
+            None => return req,
+        };
+
+        // TODO: add error returning to change_uri
+        let changed_uri = self.change_uri(uri, host).await;
+
+        *req.body_mut() = changed_request_body;
+        *req.uri_mut() = changed_uri;
 
         dbg!("CHANGED RESP", &req);
 
-        Ok(req)
+        return req;
     }
 
-    async fn change_response(
-        &self,
-        resp: Response<Body>,
-    ) -> Result<Response<Body>, hyper::http::Error> {
+    async fn change_response(&self, resp: Response<Body>) -> Response<Body> {
         dbg!("RESP", &resp);
 
         let mut resp = resp;
         let mut headers = resp.headers().clone();
-        let body = resp.body_mut();
+        let body = match hyper::body::to_bytes(resp.body_mut()).await {
+            Ok(res) => res,
+            Err(_) => return resp,
+        };
 
-        let (new_body, new_body_length) = self
-            .change_response_body(hyper::body::to_bytes(body).await.expect("body to bytes"))
-            .await;
+        let (new_body, new_body_length) = self.change_response_body(body).await;
 
-        *resp.body_mut() = new_body.unwrap();
+        let new_body = match new_body {
+            Ok(res) => res,
+            Err(_) => return resp,
+        };
+        let new_body_length = match new_body_length.to_string().parse() {
+            Ok(res) => res,
+            Err(_) => return resp,
+        };
 
-        headers.insert(
-            hyper::header::CONTENT_LENGTH,
-            new_body_length.to_string().parse().unwrap(),
-        );
+        headers.insert(hyper::header::CONTENT_LENGTH, new_body_length);
 
+        *resp.body_mut() = new_body;
         *resp.headers_mut() = headers;
 
         dbg!("CHANGED RESP", &resp);
 
-        Ok(resp)
+        resp
     }
 
     pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
@@ -271,9 +307,9 @@ impl Proxy {
 
         println!("{:?}", req.uri());
 
-        let changed_req = self.change_request(req).await.unwrap();
+        let changed_req = self.change_request(req).await;
         let changed_req_headers = changed_req.headers().clone();
-        let service_resp = Client::new().request(changed_req).await.map_err(|e| {
+        let target_service_resp = Client::new().request(changed_req).await.map_err(|e| {
             let host = changed_req_headers.get("host").unwrap();
 
             eprintln!("Service with host: `{:?}` returns {:?}", host, e);
@@ -285,7 +321,7 @@ impl Proxy {
             hyper::Error::from(e)
         });
 
-        Ok(self.change_response(service_resp.unwrap()).await.unwrap())
+        Ok(self.change_response(target_service_resp.unwrap()).await)
     }
 }
 

@@ -1,14 +1,14 @@
-pub mod config;
-pub mod helpers;
 pub mod cache;
-pub mod proxy;
-pub mod metrics;
+pub mod config;
 pub mod handlers;
+pub mod helpers;
+pub mod metrics;
+pub mod proxy;
 pub mod server;
 
 use futures::future;
-use mobc_redis::RedisConnectionManager;
 use mobc_redis::mobc::Pool;
+use mobc_redis::RedisConnectionManager;
 
 use config::Config;
 
@@ -29,13 +29,9 @@ async fn main() {
 
     let cache = cache::Cache::new(pool);
 
-    future::join_all(
-        vec![
-            tokio::spawn(async move {
-                server::run(config).await
-            }),
-            tokio::spawn(async move {
-                proxy::run(c, cache).await
-            })
-    ]).await;
+    future::join_all(vec![
+        tokio::spawn(async move { server::run(config).await }),
+        tokio::spawn(async move { proxy::run(c, cache).await }),
+    ])
+    .await;
 }
