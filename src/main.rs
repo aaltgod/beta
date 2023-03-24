@@ -14,11 +14,11 @@ use config::Config;
 
 extern crate redis;
 
+#[macro_use]
+extern crate log;
+
 #[tokio::main]
 async fn main() {
-    let config = Config::build();
-    let c = config.clone();
-
     let redis_client = redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
         .expect("couldn't create redis client");
 
@@ -27,6 +27,10 @@ async fn main() {
         .build(RedisConnectionManager::new(redis_client));
 
     let cache = cache::Cache::new(pool);
+    let config = Config::build();
+    let c = config.clone();
+
+    env_logger::init();
 
     future::join_all(vec![
         tokio::spawn(async move { server::run(config).await }),

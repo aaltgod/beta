@@ -29,7 +29,7 @@ lazy_static! {
 pub fn register_metrics() {
     REGISTRY
         .register(Box::new(INCOMING_REQUEST_COUNTER.clone()))
-        .expect("INCOMING_REQUESTS_COUNTER can't be registered");
+        .expect("INCOMING_REQUEST_COUNTER can't be registered");
 
     REGISTRY
         .register(Box::new(TARGET_SERVICE_ERROR_COUNTER.clone()))

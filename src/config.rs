@@ -23,7 +23,7 @@ impl Config {
             serde_yaml::from_reader(config_file).expect("couldn't read config values");
 
         if config.proxy_addr.is_none() {
-            panic!("proxy address is not set")
+            panic!("proxy address is not set");
         };
 
         if config.service_ports.len() == 0 {
