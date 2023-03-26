@@ -9,10 +9,7 @@ use warp::Filter;
 pub async fn run(config: config::Config) {
     metrics::register_metrics();
 
-    let addr: SocketAddr = match &config.metrics_addr {
-        Some(addr) => addr.parse().unwrap(),
-        None => return eprintln!("metrics address is not set"),
-    };
+    let addr: SocketAddr = config.metrics_addr.parse().expect("couldn't parse metrics address");
 
     let metrics_route = warp::path!("metrics").and_then(handlers::metrics_handler);
 

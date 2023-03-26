@@ -45,18 +45,8 @@ impl Proxy {
         };
 
         for target in self.config.targets.iter() {
-            let target_port = match target.port {
-                Some(p) => p,
-                None => 0,
-            };
-
-            if port == target_port {
-                let target_team_ip = match target.team_ip.clone() {
-                    Some(ip) => ip,
-                    None => split[0].to_string(),
-                };
-
-                changed_uri = changed_uri.authority(target_team_ip + ":" + split[1]);
+            if port == target.port {
+                changed_uri = changed_uri.authority(target.team_ip.clone() + ":" + split[1]);
             }
         }
 
@@ -405,8 +395,11 @@ async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hy
 }
 
 pub async fn run(config: Config, cache: Cache) {
-    // FIXME: handle it
-    let addr = config.clone().proxy_addr.unwrap().parse().unwrap();
+    let addr = config
+        .clone()
+        .proxy_addr
+        .parse()
+        .expect("couldn't parse proxy address");
 
     let proxy = Proxy::new(config.clone(), cache);
 
