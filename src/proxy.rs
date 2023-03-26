@@ -9,7 +9,7 @@ use crate::helpers;
 use crate::helpers::FLAG_REGEX;
 use crate::metrics::{
     INCOMING_REQUEST_COUNTER, PROCESSED_REQUEST_COUNTER, PROCESSED_RESPONSE_COUNTER,
-    TARGET_SERVICE_ERROR_COUNTER,
+    TARGET_SERVICE_STATUS_COUNTER,
 };
 use crate::Config;
 
@@ -363,23 +363,30 @@ impl Proxy {
 
         let changed_req = self.change_request(req).await;
         let changed_req_headers = changed_req.headers().clone();
+
+        let host = match changed_req_headers.get("host") {
+            // FIXME: handle it
+            Some(res) => res.to_str().unwrap(),
+            None => {
+                error!("handle_request get host error: {:?}", changed_req_headers);
+
+                "error host"
+            }
+        };
+
         let target_service_resp = match Client::new().request(changed_req).await {
-            Ok(res) => res,
+            Ok(res) => {
+                TARGET_SERVICE_STATUS_COUNTER
+                    .with_label_values(&[host, "OK"])
+                    .inc();
+
+                res
+            }
             Err(e) => {
-                let host = match changed_req_headers.get("host") {
-                    // FIXME: handle it
-                    Some(res) => res.to_str().unwrap(),
-                    None => {
-                        error!("handle_request get host error: {:?}", changed_req_headers);
-
-                        "error host"
-                    }
-                };
-
                 error!("Service with host: `{}` returns {:?}", host, e);
 
-                TARGET_SERVICE_ERROR_COUNTER
-                    .with_label_values(&[host])
+                TARGET_SERVICE_STATUS_COUNTER
+                    .with_label_values(&[host, "ERROR"])
                     .inc();
 
                 return Ok(Response::default());

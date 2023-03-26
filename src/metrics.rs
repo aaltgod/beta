@@ -6,14 +6,14 @@ lazy_static! {
     pub static ref INCOMING_REQUEST_COUNTER: IntCounter =
         IntCounter::new("incoming_request_counter", "Incoming request counter")
             .expect("INCOMING_REQUEST_COUNTER metric can't be created");
-    pub static ref TARGET_SERVICE_ERROR_COUNTER: IntCounterVec = IntCounterVec::new(
+    pub static ref TARGET_SERVICE_STATUS_COUNTER: IntCounterVec = IntCounterVec::new(
         Opts::new(
-            "target_service_error_counter",
-            "Target service error counter"
+            "target_service_status_counter",
+            "Target service status counter"
         ),
-        &["host"]
+        &["host", "status"]
     )
-    .expect("TARGET_SERVICE_ERROR_COUNTER metric can't be created");
+    .expect("TARGET_SERVICE_STATUS_COUNTER metric can't be created");
     pub static ref PROCESSED_REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
         Opts::new("processed_request_counter", "Processed requests counter"),
         &["status"]
@@ -32,8 +32,8 @@ pub fn register_metrics() {
         .expect("INCOMING_REQUEST_COUNTER can't be registered");
 
     REGISTRY
-        .register(Box::new(TARGET_SERVICE_ERROR_COUNTER.clone()))
-        .expect("TARGET_SERVICE_ERROR_COUNTER can't be registered");
+        .register(Box::new(TARGET_SERVICE_STATUS_COUNTER.clone()))
+        .expect("TARGET_SERVICE_STATUS_COUNTER can't be registered");
 
     REGISTRY
         .register(Box::new(PROCESSED_REQUEST_COUNTER.clone()))
