@@ -18,16 +18,28 @@ extern crate redis;
 extern crate log;
 
 #[tokio::main]
-async fn main() {
-    let redis_client = redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
-        .expect("couldn't create redis client");
+async fn main() -> () {
+    let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
+    {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("couldn't connect to redis: {}", e);
+            return;
+        }
+    };
 
     let pool = Pool::builder()
         .max_open(20)
         .build(RedisConnectionManager::new(redis_client));
 
     let cache = cache::Cache::new(pool);
-    let config = Config::build();
+    let config = match Config::build() {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("couldn't parse `config.yaml`: {}", e.to_string());
+            return;
+        }
+    };
     let c = config.clone();
 
     env_logger::init();
@@ -37,4 +49,6 @@ async fn main() {
         tokio::spawn(async move { proxy::run(c, cache).await }),
     ])
     .await;
+
+    return;
 }

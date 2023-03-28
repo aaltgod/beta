@@ -6,6 +6,6 @@ service_ports: [ 3444, 3445, 3446 ]
 team_ips: [ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]
 
 targets:
-    - { port: 4556, team_ip: 127.0.0.1 }
-    - { port: 4554, team_ip: 127.0.0.1 }
-    - { port: 4555, team_ip: 10.0.13.23 }
+    - { team_ip: 127.0.0.1, port: 4556 }
+    - { team_ip: 127.0.0.1, port: 4554 }
+    - { team_ip: 10.0.13.23, port: 4555 }

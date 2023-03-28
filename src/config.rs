@@ -1,12 +1,13 @@
 use serde::Deserialize;
+use std::io::{Error, ErrorKind};
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct ConfigFromReader {
     proxy_addr: Option<String>,
     metrics_addr: Option<String>,
-    service_ports: Vec<u32>,
-    team_ips: Vec<String>,
-    targets: Vec<TargetFromReader>,
+    service_ports: Option<Vec<u32>>,
+    team_ips: Option<Vec<String>>,
+    targets: Option<Vec<TargetFromReader>>,
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
@@ -31,51 +32,115 @@ pub struct Target {
 }
 
 impl Config {
-    pub fn build() -> Self {
-        let config_file = std::fs::File::open("config.yaml").expect("couldn't open config file");
+    pub fn build() -> Result<Self, Error> {
+        let config_file = std::fs::File::open("config.yaml")?;
 
-        let config_from_reader: ConfigFromReader =
-            serde_yaml::from_reader(config_file).expect("couldn't read config values");
-
-        if config_from_reader.proxy_addr.is_none() {
-            panic!("proxy address is not set");
+        let config_from_reader: ConfigFromReader = match serde_yaml::from_reader(config_file) {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("couldn't read config values: {}", e),
+                ))
+            }
         };
 
-        if config_from_reader.service_ports.len() == 0 {
-            panic!("service ports are not set");
-        }
+        Ok(Config {
+            proxy_addr: match config_from_reader.proxy_addr {
+                Some(res) => res,
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "`proxy_addr` is not set, want(example):
 
-        if config_from_reader.team_ips.len() == 0 {
-            panic!("team ips are not set");
-        }
+                proxy_addr: 0.0.0.0:1337
+                ",
+                    ))
+                }
+            },
+            metrics_addr: match config_from_reader.metrics_addr {
+                Some(res) => res,
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "`metrics_addr` is not set, want(example):
 
-        if config_from_reader.targets.len() == 0 {
-            panic!("targets are not set")
-        }
+                metrics_addr: 0.0.0.0:8989
+                ",
+                    ))
+                }
+            },
+            service_ports: match config_from_reader.service_ports {
+                Some(res) => res,
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "`service_ports` is not set, want(example):
 
-        for t in config_from_reader.targets.iter() {
-            if t.port.is_none() {
-                panic!("target port is not set")
-            }
+                service_ports: [ 3444, 3445, 3446 ]
+                ",
+                    ))
+                }
+            },
+            team_ips: match config_from_reader.team_ips {
+                Some(res) => res,
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "`team_ips` is not set, want(example):
 
-            if t.team_ip.is_none() {
-                panic!("target team ip is not set")
-            }
-        }
+                team_ips: [ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]
+                ",
+                    ))
+                }
+            },
+            targets: {
+                let targets = match config_from_reader.targets {
+                    Some(res) => res,
+                    None => {
+                        return Err(Error::new(
+                            ErrorKind::InvalidInput,
+                            "`team_ips` is not set, want(example):
 
-        Config {
-            proxy_addr: config_from_reader.proxy_addr.unwrap(),
-            metrics_addr: config_from_reader.metrics_addr.unwrap(),
-            service_ports: config_from_reader.service_ports,
-            team_ips: config_from_reader.team_ips,
-            targets: config_from_reader
-                .targets
-                .iter()
-                .map(|t| Target {
-                    port: t.clone().port.unwrap(),
-                    team_ip: t.clone().team_ip.unwrap(),
-                })
-                .collect(),
-        }
+                team_ips: [ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]
+                ",
+                        ));
+                    }
+                };
+
+                let mut result: Vec<Target> = Vec::new();
+
+                for t in targets.iter() {
+                    result.push(Target {
+                        port: match t.clone().port {
+                            Some(res) => res,
+                            None => {
+                                return Err(Error::new(
+                                    ErrorKind::InvalidInput,
+                                    "`port` in targets is not set, want(example):
+
+                - { team_ip: 127.0.0.1, port: 4554 }
+                ",
+                                ));
+                            }
+                        },
+                        team_ip: match t.clone().team_ip {
+                            Some(res) => res,
+                            None => {
+                                return Err(Error::new(
+                                    ErrorKind::InvalidInput,
+                                    "`team_ip` in targets is not set, want(example):
+
+                - { team_ip: 127.0.0.1, port: 4554 }
+                ",
+                                ));
+                            }
+                        },
+                    })
+                }
+
+                result
+            },
+        })
     }
 }
