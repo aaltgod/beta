@@ -19,11 +19,13 @@ extern crate log;
 
 #[tokio::main]
 async fn main() -> () {
+    env_logger::init();
+
     let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
     {
         Ok(res) => res,
         Err(e) => {
-            eprintln!("couldn't connect to redis: {}", e);
+            error!("couldn't connect to redis: {}", e);
             return;
         }
     };
@@ -36,13 +38,11 @@ async fn main() -> () {
     let config = match Config::build() {
         Ok(res) => res,
         Err(e) => {
-            eprintln!("couldn't parse `config.yaml`: {}", e.to_string());
+            error!("couldn't parse `config.yaml`: {}", e.to_string());
             return;
         }
     };
     let c = config.clone();
-
-    env_logger::init();
 
     future::join_all(vec![
         tokio::spawn(async move { server::run(config).await }),
