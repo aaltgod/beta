@@ -1,31 +1,19 @@
+use anyhow::Error as anyHowError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(
-        "ChangerError: 
-    [
-        Method:         {method_name:?}
-        Description:    {description:?}
-        Text:           {error_text:?}
-    ]
-    "
+        "{method_name:?} `{description:?}`: {error:?}"
     )]
     Changer {
         method_name: String,
         description: String,
-        error_text: String,
+        error: anyHowError,
     },
-    #[error(
-        "CacheError:
-    [
-        Method: {method_name:?}
-        Text:   {error_text:?}
-    ]
-    "
-    )]
+    #[error("{method_name:?}: {error:?}")]
     Cache {
         method_name: String,
-        error_text: String,
+        error: anyHowError,
     },
 }

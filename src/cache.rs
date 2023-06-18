@@ -30,7 +30,7 @@ impl Cache {
             Err(e) => {
                 return Err(Error::Cache {
                     method_name: "get_conn".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 })
             }
         };
@@ -40,7 +40,7 @@ impl Cache {
             Err(e) => {
                 return Err(Error::Cache {
                     method_name: "set_nx".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 })
             }
         };
@@ -54,7 +54,7 @@ impl Cache {
             Err(e) => {
                 return Err(Error::Cache {
                     method_name: "get_conn".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 })
             }
         };
@@ -66,7 +66,7 @@ impl Cache {
                 _ => {
                     return Err(Error::Cache {
                         method_name: "conn.get".to_string(),
-                        error_text: e.to_string(),
+                        error: e.into(),
                     })
                 }
             },
@@ -75,3 +75,15 @@ impl Cache {
         Ok(flag)
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     fn set_flag() -> Result<(), Error> {
+//         let cache = Cache::new()
+
+//         Ok(())
+//     }
+// }

@@ -13,7 +13,7 @@ pub async fn run(config: config::Config) {
 
     let metrics_route = warp::path!("metrics").and_then(handlers::metrics_handler);
 
-    info!("START SERVER ON ADDRESS: {}", addr);
+    warn!("START SERVER ON ADDRESS: {}", addr);
 
     warp::serve(metrics_route).run(addr).await
 }

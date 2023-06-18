@@ -1,5 +1,6 @@
-use std::fmt::Error as fmtError;
 use std::time::Duration;
+
+use anyhow::anyhow;
 
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
@@ -26,14 +27,14 @@ impl Proxy {
         Proxy { config, cache }
     }
 
-    async fn change_uri(&self, uri: Uri, host: HeaderValue) -> Result<Uri, Error> {
+    async fn change_uri(&self, uri: &mut Uri, host: HeaderValue) -> Result<(), Error> {
         let host = match host.to_str() {
             Ok(res) => res,
             Err(e) => {
                 return Err(Error::Changer {
                     method_name: "host.to_str".to_string(),
                     description: "couldn't parse host".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -45,7 +46,7 @@ impl Proxy {
             return Err(Error::Changer {
                 method_name: "host.split".to_string(),
                 description: "host is invalid".to_string(),
-                error_text: fmtError::default().to_string(),
+                error: anyhow!("Host is invalid"),
             });
         }
 
@@ -55,7 +56,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "split.parse".to_string(),
                     description: "couldn't parse port".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -76,7 +77,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "uri.path_and_query".to_string(),
                     description: "path is None".to_string(),
-                    error_text: fmtError::default().to_string(),
+                    error: anyhow!("Path is None"),
                 })
             }
         };
@@ -84,41 +85,27 @@ impl Proxy {
         if helpers::contains_flag(path) {
             info!("TO CHANGE PATH:  {:?}", FLAG_REGEX.clone().captures(path));
 
-            let captures = match FLAG_REGEX.clone().captures(path) {
-                Some(res) => res,
-                None => {
-                    return Err(Error::Changer {
-                        method_name: "FLAG_REGEX.captures".to_string(),
-                        description: format!("couldn't capture with path: {}", path),
-                        error_text: fmtError::default().to_string(),
-                    });
-                }
-            };
+            let mut changed_path = path.to_string();
 
-            // TODO: add flags replacement when its more 1
-            if captures.len() == 1 {
-                // FIXME: extra trip to redis if f == ""
-                let flag = captures.get(0).map_or("", |f| f.as_str());
+            for flag in FLAG_REGEX.clone().find_iter(path) {
                 let new_flag = helpers::build_flag(false);
-                let flag_from_cache = match self.cache.get_flag(flag.to_string()).await {
+                let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await {
                     Ok(f) => f,
                     Err(e) => {
                         return Err(Error::Changer {
                             method_name: "cache.get_flag".to_string(),
                             description: "couldn't get flag from cache".to_string(),
-                            error_text: e.to_string(),
+                            error: e.into(),
                         });
                     }
                 };
 
                 info!("GOT FLAG IN PATH {:?}", flag);
 
-                let changed_path: String;
-
                 if flag_from_cache.len() == 0 {
                     let _result = match self
                         .cache
-                        .set_flag(flag.to_string(), new_flag.clone())
+                        .set_flag(flag.as_str().to_string(), new_flag.clone())
                         .await
                     {
                         Ok(()) => info!("OK set: flag - new_flag"),
@@ -126,14 +113,14 @@ impl Proxy {
                             return Err(Error::Changer {
                                 method_name: "cache.set_flag".to_string(),
                                 description: "couldn't set `flag: new_flag` in cache".to_string(),
-                                error_text: e.to_string(),
+                                error: e.into(),
                             });
                         }
                     };
 
                     let _result = match self
                         .cache
-                        .set_flag(new_flag.clone(), flag.to_string())
+                        .set_flag(new_flag.clone(), flag.as_str().to_string())
                         .await
                     {
                         Ok(()) => info!("OK set new_flag - flag"),
@@ -141,7 +128,7 @@ impl Proxy {
                             return Err(Error::Changer {
                                 method_name: "cache.set_flag".to_string(),
                                 description: "couldn't set `new_flag: flag` in cache".to_string(),
-                                error_text: e.to_string(),
+                                error: e.into(),
                             });
                         }
                     };
@@ -155,35 +142,34 @@ impl Proxy {
                 }
 
                 info!("CHANGED PATH:  {:?}", changed_path);
+            }
 
-                let result = match changed_uri.path_and_query(changed_path).build() {
-                    Ok(res) => res,
-                    Err(e) => {
-                        return Err(Error::Changer {
-                            method_name: "changed_uri.build".to_string(),
-                            description: "couldn't build changed_uri with changed_path".to_string(),
-                            error_text: e.to_string(),
-                        });
-                    }
-                };
-
-                return Ok(result);
+            *uri = match changed_uri.path_and_query(changed_path).build() {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(Error::Changer {
+                        method_name: "changed_uri.build".to_string(),
+                        description: "couldn't build changed_uri with changed_path".to_string(),
+                        error: e.into(),
+                    });
+                }
             };
+
+            return Ok(());
         };
 
-        let result = match changed_uri.path_and_query(path).build() {
+        *uri = match changed_uri.path_and_query(path).build() {
             Ok(res) => res,
             Err(e) => {
-                error!("change_uri build chnaged_uri error: {}", e);
                 return Err(Error::Changer {
                     method_name: "changed_uri.build".to_string(),
                     description: "couldn't build changed_uri with path".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
 
-        Ok(result)
+        Ok(())
     }
 
     async fn change_request_body(&self, body: &mut Body) -> Result<Body, Error> {
@@ -193,7 +179,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "to_bytes".to_string(),
                     description: "couldn't make body to bytes".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -205,7 +191,7 @@ impl Proxy {
                     return Err(Error::Changer {
                         method_name: "from_utf8".to_string(),
                         description: "couldn't make body_bytes to str".to_string(),
-                        error_text: e.to_string(),
+                        error: e.into(),
                     });
                 }
             };
@@ -223,7 +209,7 @@ impl Proxy {
                             return Err(Error::Changer {
                                 method_name: "cache.get_flag".to_string(),
                                 description: "couldn't get flag from cache".to_string(),
-                                error_text: e.to_string(),
+                                error: e.into(),
                             });
                         }
                     };
@@ -242,7 +228,7 @@ impl Proxy {
                                     method_name: "cache.set_flag".to_string(),
                                     description: "couldn't set `flag: new_flag` in cache"
                                         .to_string(),
-                                    error_text: e.to_string(),
+                                    error: e.into(),
                                 });
                             }
                         };
@@ -258,7 +244,7 @@ impl Proxy {
                                     method_name: "cache.set_flag".to_string(),
                                     description: "couldn't set `new_flag: flag` in cache"
                                         .to_string(),
-                                    error_text: e.to_string(),
+                                    error: e.into(),
                                 });
                             }
                         };
@@ -296,7 +282,7 @@ impl Proxy {
                     Err(Error::Changer {
                         method_name: "to_bytes".to_string(),
                         description: "couldn't make body to bytes".to_string(),
-                        error_text: e.to_string(),
+                        error: e.into(),
                     }),
                     0,
                 );
@@ -312,7 +298,7 @@ impl Proxy {
                         Err(Error::Changer {
                             method_name: "from_utf8".to_string(),
                             description: "couldn't make body_bytes to str".to_string(),
-                            error_text: e.to_string(),
+                            error: e.into(),
                         }),
                         0,
                     );
@@ -333,7 +319,7 @@ impl Proxy {
                                 Err(Error::Changer {
                                     method_name: "cache.get_flag".to_string(),
                                     description: "couldn't get flag from cache".to_string(),
-                                    error_text: e.to_string(),
+                                    error: e.into(),
                                 }),
                                 0,
                             );
@@ -369,7 +355,7 @@ impl Proxy {
         info!("REQ {:?}", req);
 
         let mut headers = req.headers().clone();
-        let uri = req.uri().clone();
+        let mut uri = req.uri().clone();
         let body = req.body_mut();
 
         let changed_request_body = match self.change_request_body(body).await {
@@ -377,8 +363,8 @@ impl Proxy {
             Err(e) => {
                 return Err(Error::Changer {
                     method_name: "change_request_body".to_string(),
-                    description: "coudn't change request body".to_string(),
-                    error_text: e.to_string(),
+                    description: "couldn't change request body".to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -389,27 +375,27 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "headers.get".to_string(),
                     description: "couldn't get host".to_string(),
-                    error_text: "None".to_string(),
+                    error: anyhow!("Host is None"),
                 });
             }
         };
 
-        let changed_uri = match self.change_uri(uri, host.clone()).await {
-            Ok(res) => res,
+        match self.change_uri(&mut uri, host.clone()).await {
+            Ok(_) => (),
             Err(e) => {
                 return Err(Error::Changer {
                     method_name: "change_uri".to_string(),
                     description: "couldn't change uri".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
 
-        info!("CHANGED URI {:?}", changed_uri);
+        info!("CHANGED URI {:?}", uri);
 
-        let mut changed_host = changed_uri.host().unwrap().to_string();
+        let mut changed_host = uri.host().unwrap().to_string();
         changed_host.push_str(":");
-        changed_host.push_str(changed_uri.port().unwrap().as_str());
+        changed_host.push_str(uri.port().unwrap().as_str());
 
         headers.insert(
             "host",
@@ -417,7 +403,7 @@ impl Proxy {
         );
 
         *req.body_mut() = changed_request_body;
-        *req.uri_mut() = changed_uri;
+        *req.uri_mut() = uri;
         *req.headers_mut() = headers;
 
         info!("CHANGED REQ {:?}", req);
@@ -437,7 +423,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "change_response_body".to_string(),
                     description: "couldn't get new_body".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -463,7 +449,7 @@ impl Proxy {
 
         let mut req = req;
 
-        // TODO: if change_request returns, need to skip (original) request above maybe 
+        // TODO: if change_request returns, need to skip (original) request above maybe
         let changed_req = match self.change_request(&mut req).await {
             Ok(_) => {
                 CHANGED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
@@ -476,7 +462,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "change_request".to_string(),
                     description: "couldn't change request ".to_string(),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -493,7 +479,7 @@ impl Proxy {
                         "couldn't get host from changed_req_headers: `{:?}`",
                         changed_req_headers
                     ),
-                    error_text: fmtError::default().to_string(),
+                    error: anyhow!("Host is None"),
                 });
             }
         };
@@ -521,7 +507,7 @@ impl Proxy {
                 return Err(Error::Changer {
                     method_name: "request".to_string(),
                     description: format!("target service with host `{}` returned `{:?}`", host, e),
-                    error_text: e.to_string(),
+                    error: e.into(),
                 });
             }
         };
@@ -576,7 +562,7 @@ pub async fn run(config: Config, cache: Cache) {
 
     let server = HTTPServer::bind(&addr).serve(make_service);
 
-    info!("START PROXY ON ADDRESS: {}", addr);
+    warn!("START PROXY ON ADDRESS: {}", addr);
 
     if let Err(e) = server.await {
         error!("Fatal err {}", e);
