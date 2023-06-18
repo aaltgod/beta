@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod config;
+pub mod errors;
 pub mod handlers;
 pub mod helpers;
 pub mod metrics;
@@ -21,11 +22,12 @@ extern crate log;
 async fn main() -> () {
     env_logger::init();
 
-    let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2138".to_string())
+    // TODO: add connect checking
+    let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2139".to_string())
     {
         Ok(res) => res,
         Err(e) => {
-            error!("couldn't connect to redis: {}", e);
+            error!("couldn't create redis client: {}", e);
             return;
         }
     };
@@ -49,6 +51,4 @@ async fn main() -> () {
         tokio::spawn(async move { proxy::run(c, cache).await }),
     ])
     .await;
-
-    return;
 }

@@ -2,6 +2,8 @@ use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 use redis::{AsyncCommands, RedisError};
 
+use crate::errors::Error;
+
 #[derive(Clone)]
 pub struct Cache {
     pool: Pool<RedisConnectionManager>,
@@ -22,22 +24,54 @@ impl Cache {
     }
 
     // FIXME: please
-    pub async fn set_flag(&self, key: String, value: String) -> Result<(), RedisError> {
-        let mut conn = self.get_conn().await.expect("redis set_flag conn error");
-        conn.set_nx(key, value).await?;
+    pub async fn set_flag(&self, key: String, value: String) -> Result<(), Error> {
+        let mut conn = match self.get_conn().await {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(Error::Cache {
+                    method_name: "get_conn".to_string(),
+                    error_text: e.to_string(),
+                })
+            }
+        };
+
+        match conn.set_nx(key, value).await {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(Error::Cache {
+                    method_name: "set_nx".to_string(),
+                    error_text: e.to_string(),
+                })
+            }
+        };
 
         Ok(())
     }
 
-    pub async fn get_flag(&self, key: String) -> Result<String, RedisError> {
-        let mut conn = self.get_conn().await.expect("redis get_flag conn error");
+    pub async fn get_flag(&self, key: String) -> Result<String, Error> {
+        let mut conn = match self.get_conn().await {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(Error::Cache {
+                    method_name: "get_conn".to_string(),
+                    error_text: e.to_string(),
+                })
+            }
+        };
 
-        match conn.get(key).await {
-            Ok(flag) => return Ok(flag),
+        let flag = match conn.get(key).await {
+            Ok(flag) => flag,
             Err(e) => match e.kind() {
-                redis::ErrorKind::TypeError => return Ok("".to_string()),
-                _ => return Err(e),
+                redis::ErrorKind::TypeError => "".to_string(),
+                _ => {
+                    return Err(Error::Cache {
+                        method_name: "conn.get".to_string(),
+                        error_text: e.to_string(),
+                    })
+                }
             },
-        }
+        };
+
+        Ok(flag)
     }
 }

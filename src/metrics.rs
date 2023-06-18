@@ -14,16 +14,21 @@ lazy_static! {
         &["host", "status"]
     )
     .expect("TARGET_SERVICE_STATUS_COUNTER metric can't be created");
-    pub static ref PROCESSED_REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("processed_request_counter", "Processed requests counter"),
+    pub static ref CHANGED_REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("changed_request_counter", "Changed request counter"),
         &["status"]
     )
-    .expect("PROCESSED_REQUEST_COUNTER metric can't be created");
-    pub static ref PROCESSED_RESPONSE_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("processed_response_counter", "Processed response counter"),
+    .expect("CHANGED_REQUEST_COUNTER metric can't be created");
+    pub static ref CHANGED_RESPONSE_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("changed_response_counter", "Changed response counter"),
         &["status"]
     )
-    .expect("PROCESSED_RESPONSE_COUNTER metric can't be created");
+    .expect("CHANGED_RESPONSE_COUNTER metric can't be created");
+    pub static ref HANDLED_REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("handled_request_counter", "Handled request counter"),
+        &["status"]
+    )
+    .expect("HANDLED_REQUEST_COUNTER metric can't be created");
 }
 
 pub fn register_metrics() {
@@ -36,10 +41,14 @@ pub fn register_metrics() {
         .expect("TARGET_SERVICE_STATUS_COUNTER can't be registered");
 
     REGISTRY
-        .register(Box::new(PROCESSED_REQUEST_COUNTER.clone()))
-        .expect("PROCESSED_REQUEST_COUNTER can't be registered");
+        .register(Box::new(CHANGED_REQUEST_COUNTER.clone()))
+        .expect("CHANGED_REQUEST_COUNTER can't be registered");
 
     REGISTRY
-        .register(Box::new(PROCESSED_RESPONSE_COUNTER.clone()))
-        .expect("PROCESSED_RESPONSE_COUNTER can't be registered")
+        .register(Box::new(CHANGED_RESPONSE_COUNTER.clone()))
+        .expect("CHANGED_RESPONSE_COUNTER can't be registered");
+
+    REGISTRY
+        .register(Box::new(HANDLED_REQUEST_COUNTER.clone()))
+        .expect("HANDLED_REQUEST_COUNTER can't be registered")
 }
