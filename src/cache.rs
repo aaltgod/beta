@@ -75,15 +75,3 @@ impl Cache {
         Ok(flag)
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn set_flag() -> Result<(), Error> {
-//         let cache = Cache::new()
-
-//         Ok(())
-//     }
-// }

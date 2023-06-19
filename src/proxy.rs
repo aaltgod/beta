@@ -133,11 +133,11 @@ impl Proxy {
                         }
                     };
 
-                    changed_path = FLAG_REGEX.clone().replace_all(path, new_flag).to_string();
+                    changed_path = FLAG_REGEX.clone().replace(path, new_flag).to_string();
                 } else {
                     changed_path = FLAG_REGEX
                         .clone()
-                        .replace_all(path, flag_from_cache)
+                        .replace(path, flag_from_cache)
                         .to_string();
                 }
 
@@ -294,6 +294,7 @@ impl Proxy {
             let text_body = match std::str::from_utf8(&body_bytes) {
                 Ok(res) => res,
                 Err(e) => {
+                    anyhow::
                     return (
                         Err(Error::Changer {
                             method_name: "from_utf8".to_string(),
