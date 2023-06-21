@@ -23,7 +23,6 @@ impl Cache {
         self.pool.get().await
     }
 
-    // FIXME: please
     pub async fn set_flag(&self, key: String, value: String) -> Result<(), Error> {
         let mut conn = match self.get_conn().await {
             Ok(res) => res,

@@ -22,7 +22,6 @@ extern crate log;
 async fn main() -> () {
     env_logger::init();
 
-    // TODO: add connect checking
     let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2139".to_string())
     {
         Ok(res) => res,
@@ -31,6 +30,20 @@ async fn main() -> () {
             return;
         }
     };
+
+    match redis_client.get_connection() {
+        Ok(_) => warn!(
+            "successfully connected to redis on address: {}",
+            redis_client.get_connection_info().addr
+        ),
+        Err(e) => {
+            error!(
+                "couldn't connect to redis, probably redis is not running: {}",
+                e
+            );
+            return;
+        }
+    }
 
     let pool = Pool::builder()
         .max_open(20)

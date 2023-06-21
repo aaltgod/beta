@@ -88,7 +88,6 @@ impl Proxy {
             let mut changed_path = path.to_string();
 
             for flag in FLAG_REGEX.clone().find_iter(path) {
-                let new_flag = helpers::build_flag(false);
                 let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -103,6 +102,8 @@ impl Proxy {
                 info!("GOT FLAG IN PATH {:?}", flag);
 
                 if flag_from_cache.len() == 0 {
+                    let new_flag = helpers::build_flag(false);
+
                     let _result = match self
                         .cache
                         .set_flag(flag.as_str().to_string(), new_flag.clone())
@@ -294,7 +295,6 @@ impl Proxy {
             let text_body = match std::str::from_utf8(&body_bytes) {
                 Ok(res) => res,
                 Err(e) => {
-                    anyhow::
                     return (
                         Err(Error::Changer {
                             method_name: "from_utf8".to_string(),
@@ -339,7 +339,6 @@ impl Proxy {
                 info!("CHANGED RESPONE BODY: {:?}", result_body);
 
                 let chunks: Vec<Result<_, std::io::Error>> = vec![Ok(result_body.clone())];
-
                 let stream = futures_util::stream::iter(chunks);
 
                 // TODO: add Full, Empty, Stream
@@ -528,21 +527,21 @@ impl Proxy {
             }
         }
     }
-}
 
-async fn proccess(proxy: Proxy, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    match proxy.handle_request(req).await {
-        Ok(res) => {
-            HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
+    async fn proccess(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+        match self.handle_request(req).await {
+            Ok(res) => {
+                HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
 
-            Ok(res)
-        }
-        Err(e) => {
-            error!("couldn't handle request: {}", e);
+                Ok(res)
+            }
+            Err(e) => {
+                error!("couldn't handle request: {}", e);
 
-            HANDLED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
+                HANDLED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
 
-            Ok(hyper::Response::default())
+                Ok(hyper::Response::default())
+            }
         }
     }
 }
@@ -558,14 +557,14 @@ pub async fn run(config: Config, cache: Cache) {
 
     let make_service = make_service_fn(move |_| {
         let p = proxy.clone();
-        async move { Ok::<_, hyper::Error>(service_fn(move |req| proccess(p.clone(), req))) }
+        async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().proccess(req))) }
     });
 
     let server = HTTPServer::bind(&addr).serve(make_service);
 
-    warn!("START PROXY ON ADDRESS: {}", addr);
+    warn!("start proxy on address: {}", addr);
 
     if let Err(e) = server.await {
-        error!("Fatal err {}", e);
+        error!("Fatal proxy error: {}", e);
     }
 }
