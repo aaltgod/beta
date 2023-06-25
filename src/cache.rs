@@ -2,7 +2,7 @@ use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 use redis::{AsyncCommands, RedisError};
 
-use crate::errors::Error;
+use crate::errors::CacheError;
 
 #[derive(Clone)]
 pub struct Cache {
@@ -23,11 +23,11 @@ impl Cache {
         self.pool.get().await
     }
 
-    pub async fn set_flag(&self, key: String, value: String) -> Result<(), Error> {
+    pub async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
         let mut conn = match self.get_conn().await {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Cache {
+                return Err(CacheError::Cache {
                     method_name: "get_conn".to_string(),
                     error: e.into(),
                 })
@@ -37,7 +37,7 @@ impl Cache {
         match conn.set_nx(key, value).await {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Cache {
+                return Err(CacheError::Cache {
                     method_name: "set_nx".to_string(),
                     error: e.into(),
                 })
@@ -47,11 +47,11 @@ impl Cache {
         Ok(())
     }
 
-    pub async fn get_flag(&self, key: String) -> Result<String, Error> {
+    pub async fn get_flag(&self, key: String) -> Result<String, CacheError> {
         let mut conn = match self.get_conn().await {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Cache {
+                return Err(CacheError::Cache {
                     method_name: "get_conn".to_string(),
                     error: e.into(),
                 })
@@ -63,7 +63,7 @@ impl Cache {
             Err(e) => match e.kind() {
                 redis::ErrorKind::TypeError => "".to_string(),
                 _ => {
-                    return Err(Error::Cache {
+                    return Err(CacheError::Cache {
                         method_name: "conn.get".to_string(),
                         error: e.into(),
                     })

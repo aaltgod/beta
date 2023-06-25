@@ -53,5 +53,5 @@ pub async fn metrics_handler() -> Result<impl reply::Reply, warp::Rejection> {
 
     result.push_str(&prometheus_result);
 
-    Ok(warp::reply::with_status(result, StatusCode::OK))
+    Ok(reply::with_status(result, StatusCode::OK))
 }

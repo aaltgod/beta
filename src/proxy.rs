@@ -7,31 +7,31 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 
 use crate::cache::Cache;
-use crate::errors::Error;
+use crate::config::ProxySettingsConfig;
+use crate::errors::ProxyError;
 use crate::helpers;
 use crate::helpers::FLAG_REGEX;
 use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
-use crate::Config;
 
 #[derive(Clone)]
 pub struct Proxy {
-    config: Config,
+    config: ProxySettingsConfig,
     cache: Cache,
 }
 
 impl Proxy {
-    pub fn new(config: Config, cache: Cache) -> Self {
+    pub fn new(config: ProxySettingsConfig, cache: Cache) -> Self {
         Proxy { config, cache }
     }
 
-    async fn change_uri(&self, uri: &mut Uri, host: HeaderValue) -> Result<(), Error> {
+    async fn change_uri(&self, uri: &mut Uri, host: HeaderValue) -> Result<(), ProxyError> {
         let host = match host.to_str() {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "host.to_str".to_string(),
                     description: "couldn't parse host".to_string(),
                     error: e.into(),
@@ -43,7 +43,7 @@ impl Proxy {
 
         let split: Vec<&str> = host.split(":").collect();
         if split.len() != 2 {
-            return Err(Error::Changer {
+            return Err(ProxyError::Changer {
                 method_name: "host.split".to_string(),
                 description: "host is invalid".to_string(),
                 error: anyhow!("Host is invalid"),
@@ -53,7 +53,7 @@ impl Proxy {
         let port: u32 = match split[1].trim().parse() {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "split.parse".to_string(),
                     description: "couldn't parse port".to_string(),
                     error: e.into(),
@@ -74,7 +74,7 @@ impl Proxy {
         let path = match uri.path_and_query() {
             Some(res) => res.as_str(),
             None => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "uri.path_and_query".to_string(),
                     description: "path is None".to_string(),
                     error: anyhow!("Path is None"),
@@ -91,7 +91,7 @@ impl Proxy {
                 let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await {
                     Ok(f) => f,
                     Err(e) => {
-                        return Err(Error::Changer {
+                        return Err(ProxyError::Changer {
                             method_name: "cache.get_flag".to_string(),
                             description: "couldn't get flag from cache".to_string(),
                             error: e.into(),
@@ -111,7 +111,7 @@ impl Proxy {
                     {
                         Ok(()) => info!("OK set: flag - new_flag"),
                         Err(e) => {
-                            return Err(Error::Changer {
+                            return Err(ProxyError::Changer {
                                 method_name: "cache.set_flag".to_string(),
                                 description: "couldn't set `flag: new_flag` in cache".to_string(),
                                 error: e.into(),
@@ -126,7 +126,7 @@ impl Proxy {
                     {
                         Ok(()) => info!("OK set new_flag - flag"),
                         Err(e) => {
-                            return Err(Error::Changer {
+                            return Err(ProxyError::Changer {
                                 method_name: "cache.set_flag".to_string(),
                                 description: "couldn't set `new_flag: flag` in cache".to_string(),
                                 error: e.into(),
@@ -148,7 +148,7 @@ impl Proxy {
             *uri = match changed_uri.path_and_query(changed_path).build() {
                 Ok(res) => res,
                 Err(e) => {
-                    return Err(Error::Changer {
+                    return Err(ProxyError::Changer {
                         method_name: "changed_uri.build".to_string(),
                         description: "couldn't build changed_uri with changed_path".to_string(),
                         error: e.into(),
@@ -162,7 +162,7 @@ impl Proxy {
         *uri = match changed_uri.path_and_query(path).build() {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "changed_uri.build".to_string(),
                     description: "couldn't build changed_uri with path".to_string(),
                     error: e.into(),
@@ -173,11 +173,11 @@ impl Proxy {
         Ok(())
     }
 
-    async fn change_request_body(&self, body: &mut Body) -> Result<Body, Error> {
+    async fn change_request_body(&self, body: &mut Body) -> Result<Body, ProxyError> {
         let body_bytes = match hyper::body::to_bytes(body).await {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "to_bytes".to_string(),
                     description: "couldn't make body to bytes".to_string(),
                     error: e.into(),
@@ -189,7 +189,7 @@ impl Proxy {
             let text_body = match std::str::from_utf8(&body_bytes) {
                 Ok(res) => res,
                 Err(e) => {
-                    return Err(Error::Changer {
+                    return Err(ProxyError::Changer {
                         method_name: "from_utf8".to_string(),
                         description: "couldn't make body_bytes to str".to_string(),
                         error: e.into(),
@@ -207,7 +207,7 @@ impl Proxy {
                     {
                         Ok(f) => f,
                         Err(e) => {
-                            return Err(Error::Changer {
+                            return Err(ProxyError::Changer {
                                 method_name: "cache.get_flag".to_string(),
                                 description: "couldn't get flag from cache".to_string(),
                                 error: e.into(),
@@ -225,7 +225,7 @@ impl Proxy {
                         {
                             Ok(()) => info!("ok flag - new_flag"),
                             Err(e) => {
-                                return Err(Error::Changer {
+                                return Err(ProxyError::Changer {
                                     method_name: "cache.set_flag".to_string(),
                                     description: "couldn't set `flag: new_flag` in cache"
                                         .to_string(),
@@ -241,7 +241,7 @@ impl Proxy {
                         {
                             Ok(()) => info!("ok new_flag - flag"),
                             Err(e) => {
-                                return Err(Error::Changer {
+                                return Err(ProxyError::Changer {
                                     method_name: "cache.set_flag".to_string(),
                                     description: "couldn't set `new_flag: flag` in cache"
                                         .to_string(),
@@ -275,12 +275,12 @@ impl Proxy {
         }
     }
 
-    async fn change_response_body(&self, body: &mut Body) -> (Result<Body, Error>, usize) {
+    async fn change_response_body(&self, body: &mut Body) -> (Result<Body, ProxyError>, usize) {
         let body_bytes = match hyper::body::to_bytes(body).await {
             Ok(res) => res,
             Err(e) => {
                 return (
-                    Err(Error::Changer {
+                    Err(ProxyError::Changer {
                         method_name: "to_bytes".to_string(),
                         description: "couldn't make body to bytes".to_string(),
                         error: e.into(),
@@ -296,7 +296,7 @@ impl Proxy {
                 Ok(res) => res,
                 Err(e) => {
                     return (
-                        Err(Error::Changer {
+                        Err(ProxyError::Changer {
                             method_name: "from_utf8".to_string(),
                             description: "couldn't make body_bytes to str".to_string(),
                             error: e.into(),
@@ -317,7 +317,7 @@ impl Proxy {
                         Ok(f) => f,
                         Err(e) => {
                             return (
-                                Err(Error::Changer {
+                                Err(ProxyError::Changer {
                                     method_name: "cache.get_flag".to_string(),
                                     description: "couldn't get flag from cache".to_string(),
                                     error: e.into(),
@@ -351,7 +351,7 @@ impl Proxy {
         }
     }
 
-    async fn change_request(&self, req: &mut Request<Body>) -> Result<(), Error> {
+    async fn change_request(&self, req: &mut Request<Body>) -> Result<(), ProxyError> {
         info!("REQ {:?}", req);
 
         let mut headers = req.headers().clone();
@@ -361,7 +361,7 @@ impl Proxy {
         let changed_request_body = match self.change_request_body(body).await {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "change_request_body".to_string(),
                     description: "couldn't change request body".to_string(),
                     error: e.into(),
@@ -372,7 +372,7 @@ impl Proxy {
         let host = match headers.get("host") {
             Some(res) => res,
             None => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "headers.get".to_string(),
                     description: "couldn't get host".to_string(),
                     error: anyhow!("Host is None"),
@@ -383,7 +383,7 @@ impl Proxy {
         match self.change_uri(&mut uri, host.clone()).await {
             Ok(_) => (),
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "change_uri".to_string(),
                     description: "couldn't change uri".to_string(),
                     error: e.into(),
@@ -411,7 +411,7 @@ impl Proxy {
         return Ok(());
     }
 
-    async fn change_response(&self, resp: &mut Response<Body>) -> Result<(), Error> {
+    async fn change_response(&self, resp: &mut Response<Body>) -> Result<(), ProxyError> {
         info!("RESP {:?}", resp);
 
         let mut headers = resp.headers().clone();
@@ -420,7 +420,7 @@ impl Proxy {
         let new_body = match new_body {
             Ok(res) => res,
             Err(e) => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "change_response_body".to_string(),
                     description: "couldn't get new_body".to_string(),
                     error: e.into(),
@@ -442,7 +442,7 @@ impl Proxy {
         Ok(())
     }
 
-    pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, Error> {
+    pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, ProxyError> {
         INCOMING_REQUEST_COUNTER.inc();
 
         info!("handle_request URI {:?}", req.uri());
@@ -459,7 +459,7 @@ impl Proxy {
             Err(e) => {
                 CHANGED_REQUEST_COUNTER.with_label_values(&["FAIL"]).inc();
 
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "change_request".to_string(),
                     description: "couldn't change request ".to_string(),
                     error: e.into(),
@@ -473,7 +473,7 @@ impl Proxy {
             // FIXME: handle it
             Some(res) => res.to_str().unwrap(),
             None => {
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "changed_req_headers.get".to_string(),
                     description: format!(
                         "couldn't get host from changed_req_headers: `{:?}`",
@@ -504,7 +504,7 @@ impl Proxy {
                     .with_label_values(&[host, "ERROR"])
                     .inc();
 
-                return Err(Error::Changer {
+                return Err(ProxyError::Changer {
                     method_name: "request".to_string(),
                     description: format!("target service with host `{}` returned `{:?}`", host, e),
                     error: e.into(),
@@ -546,20 +546,14 @@ impl Proxy {
     }
 }
 
-pub async fn run(config: Config, cache: Cache) {
-    let addr = config
-        .clone()
-        .proxy_addr
-        .parse()
-        .expect("couldn't parse proxy address");
-
+pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) {
     let proxy = Proxy::new(config, cache);
-
     let make_service = make_service_fn(move |_| {
         let p = proxy.clone();
         async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().proccess(req))) }
     });
 
+    let addr = proxy_addr.parse().expect("couldn't parse proxy address");
     let server = HTTPServer::bind(&addr).serve(make_service);
 
     warn!("start proxy on address: {}", addr);

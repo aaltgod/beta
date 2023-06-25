@@ -11,8 +11,6 @@ use futures::future;
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 
-use config::Config;
-
 extern crate redis;
 
 #[macro_use]
@@ -22,11 +20,28 @@ extern crate log;
 async fn main() -> () {
     env_logger::init();
 
-    let redis_client = match redis::Client::open("redis://:SUP3RS3CRET@127.0.0.1:2139".to_string())
-    {
+    let secrets_config = match config::build_secrets_config() {
         Ok(res) => res,
         Err(e) => {
-            error!("couldn't create redis client: {}", e);
+            error!("couldn't build secrets config: {}", e);
+            return;
+        }
+    };
+    let proxy_settings_config = match config::build_proxy_settings_config() {
+        Ok(res) => res,
+        Err(e) => {
+            error!("couldn't build proxy settings config: {}", e);
+            return;
+        }
+    };
+
+    let redis_client = match redis::Client::open(format!(
+        "redis://:{}@{}",
+        secrets_config.redis_password, secrets_config.redis_addr
+    )) {
+        Ok(res) => res,
+        Err(e) => {
+            error!("couldn't build redis client: {}", e);
             return;
         }
     };
@@ -45,23 +60,20 @@ async fn main() -> () {
         }
     }
 
-    let pool = Pool::builder()
-        .max_open(20)
-        .build(RedisConnectionManager::new(redis_client));
-
-    let cache = cache::Cache::new(pool);
-    let config = match Config::build() {
-        Ok(res) => res,
-        Err(e) => {
-            error!("couldn't parse `config.yaml`: {}", e.to_string());
-            return;
-        }
-    };
-    let c = config.clone();
-
     future::join_all(vec![
-        tokio::spawn(async move { server::run(config).await }),
-        tokio::spawn(async move { proxy::run(c, cache).await }),
+        tokio::spawn(async move { server::run(secrets_config.metrics_addr).await }),
+        tokio::spawn(async move {
+            proxy::run(
+                secrets_config.proxy_addr,
+                proxy_settings_config,
+                cache::Cache::new(
+                    Pool::builder()
+                        .max_open(20)
+                        .build(RedisConnectionManager::new(redis_client)),
+                ),
+            )
+            .await
+        }),
     ])
     .await;
 }
