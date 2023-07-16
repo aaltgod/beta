@@ -46,7 +46,7 @@ impl Proxy {
             return Err(ProxyError::Changer {
                 method_name: "host.split".to_string(),
                 description: "host is invalid".to_string(),
-                error: anyhow!("Host is invalid"),
+                error: anyhow!("Host is invalid: {:?}", host),
             });
         }
 

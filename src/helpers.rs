@@ -5,6 +5,7 @@ use regex::Regex;
 lazy_static! {
     pub static ref FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}=").unwrap();
     pub static ref ENCODED_FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
+    pub static ref ENV_VAR_REGEX: Regex = Regex::new(r"\$\{([\w]*)\}").unwrap();
 }
 
 const FLAG_LEN: usize = 31;

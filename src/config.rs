@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::fs::File;
 
-use crate::errors::ConfigError;
+use crate::{errors::ConfigError, helpers::ENV_VAR_REGEX};
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct SecretsFromReader {
@@ -92,7 +92,12 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
 
     Ok(SecretsConfig {
         redis_addr: match secrets.redis_addr {
-            Some(res) => res,
+            Some(res) => match build_envs_from_str(&res) {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(e);
+                }
+            },
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -102,7 +107,12 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
             }
         },
         redis_password: match secrets.redis_password {
-            Some(res) => res,
+            Some(res) => match build_envs_from_str(&res) {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(e);
+                }
+            },
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -214,4 +224,26 @@ pub fn build_proxy_settings_config() -> Result<ProxySettingsConfig, ConfigError>
             result
         },
     })
+}
+
+fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {
+    let mut result = str.to_string();
+
+    for v in ENV_VAR_REGEX.clone().captures_iter(str) {
+        let env_name = v.get(1).map_or("", |m| m.as_str());
+        let env_value = match dotenv::var(env_name) {
+            Ok(res) => res,
+            Err(_) => {
+                return Err(ConfigError::Env {
+                    env_name: env_name.to_string(),
+                })
+            }
+        };
+
+        let env_var_reg = v.get(0).map(|s| s.as_str()).unwrap();
+
+        result = result.replace(env_var_reg, env_value.as_str())
+    }
+
+    Ok(result)
 }

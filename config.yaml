@@ -1,6 +1,6 @@
 secrets:
-  redis_addr: 127.0.0.1:2139
-  redis_password: SUP3RS3CRET
+  redis_addr: ${REDIS_HOST}:${REDIS_PORT}
+  redis_password: ${REDIS_PASSWORD}
 
   proxy_addr: 0.0.0.0:1337
   metrics_addr: 0.0.0.0:8989

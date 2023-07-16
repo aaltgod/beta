@@ -28,14 +28,22 @@ pub enum ConfigError {
         error: anyHowError,
     },
     #[error(
-        "`{key}` is not set, want(example):
+        "
+        {env_name} is not set in .env
+    "
+    )]
+    Env { env_name: String },
+    #[error(
+        "
+        `{key}` is not set, want(example):
 
         {key}:
     "
     )]
     NoKey { key: String },
     #[error(
-        "`{key}` is not set, want(example):
+        "
+        `{key}` is not set, want(example):
         
         {group}:
             {key}: {value_example}
@@ -47,7 +55,8 @@ pub enum ConfigError {
         value_example: String,
     },
     #[error(
-        "an element in `{list_name}` is not set or set not correctly, want(example):
+        "
+        an element in `{list_name}` is not set or set not correctly, want(example):
         
         {list_name}:
             - {element_example}
