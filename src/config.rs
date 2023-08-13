@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::fs::File;
+use std::{fs::File, thread};
 
 use crate::{errors::ConfigError, helpers::ENV_VAR_REGEX};
 
@@ -46,9 +46,9 @@ pub struct SecretsConfig {
 /// Config for proxy settings.
 #[derive(Default, Debug, Clone)]
 pub struct ProxySettingsConfig {
-    pub service_ports: Vec<u32>,
-    pub team_ips: Vec<String>,
-    pub targets: Vec<Target>,
+    service_ports: Vec<u32>,
+    team_ips: Vec<String>,
+    targets: Vec<Target>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -144,86 +144,145 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
     })
 }
 
-pub fn build_proxy_settings_config() -> Result<ProxySettingsConfig, ConfigError> {
-    let config_file = open_file("config.yaml")?;
-    let config_from_reader: ProxySettingsFromReader = match serde_yaml::from_reader(config_file) {
-        Ok(res) => res,
-        Err(e) => {
-            return Err(ConfigError::Etc {
-                description: "couldn't read config values".to_string(),
-                error: e.into(),
-            })
-        }
-    };
+impl ProxySettingsConfig {
+    pub fn new() -> Result<Self, ConfigError> {
+        let mut c = ProxySettingsConfig {
+            service_ports: vec![],
+            team_ips: vec![],
+            targets: vec![],
+        };
 
-    let proxy_settings = match config_from_reader.proxy_settings {
-        Some(res) => res,
-        None => {
-            return Err(ConfigError::NoKey {
-                key: "proxy_settings".to_string(),
-            })
-        }
-    };
+        let build_result = c.clone().build()?;
 
-    Ok(ProxySettingsConfig {
-        service_ports: match proxy_settings.service_ports {
-            Some(res) => res,
-            None => {
-                return Err(ConfigError::NoGroupKey {
-                    group: "proxy_settings".to_string(),
-                    key: "service_ports".to_string(),
-                    value_example: "[ 3444, 3445, 3446 ]".to_string(),
+        c.service_ports = build_result.service_ports;
+        c.targets = build_result.targets;
+        c.team_ips = build_result.team_ips;
+
+        c.clone().watch();
+
+        Ok(c)
+    }
+
+    fn watch(mut self) {
+        std::thread::spawn(move || loop {
+            thread::sleep(std::time::Duration::from_secs(2));
+
+            let updated_config = self.clone().build().unwrap();
+
+            let mut found_equals = 0;
+
+            for target in self.targets.iter() {
+                for updated_target in updated_config.targets.iter() {
+                    if updated_target.port.eq(&target.port)
+                        && updated_target.team_ip.eq(&target.team_ip)
+                    {
+                        found_equals += 1;
+                        break;
+                    }
+                }
+            }
+
+            if !found_equals.eq(&self.targets.len())
+                || !self.targets.len().eq(&updated_config.targets.len())
+            {
+                warn!("GOT CHANGES IN PROXY SETTINGS CONFIG");
+                self.targets = updated_config.targets;
+            }
+        });
+    }
+
+    pub fn services_ports(self) -> Vec<u32> {
+        self.service_ports
+    }
+
+    pub fn targets(self) -> Vec<Target> {
+        self.targets
+    }
+
+    fn build(self) -> Result<ProxySettingsConfig, ConfigError> {
+        let config_file = open_file("config.yaml")?;
+        let config_from_reader: ProxySettingsFromReader = match serde_yaml::from_reader(config_file)
+        {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(ConfigError::Etc {
+                    description: "couldn't read config values".to_string(),
+                    error: e.into(),
                 })
             }
-        },
-        team_ips: match proxy_settings.team_ips {
+        };
+
+        let proxy_settings = match config_from_reader.proxy_settings {
             Some(res) => res,
             None => {
-                return Err(ConfigError::NoGroupKey {
-                    group: "proxy_settings".to_string(),
-                    key: "team_ips".to_string(),
-                    value_example: "[ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]".to_string(),
+                return Err(ConfigError::NoKey {
+                    key: "proxy_settings".to_string(),
                 })
             }
-        },
-        targets: {
-            let targets = match proxy_settings.targets {
+        };
+
+        Ok(ProxySettingsConfig {
+            service_ports: match proxy_settings.service_ports {
                 Some(res) => res,
                 None => {
-                    return Err(ConfigError::NoKey {
-                        key: "targets".to_string(),
+                    return Err(ConfigError::NoGroupKey {
+                        group: "proxy_settings".to_string(),
+                        key: "service_ports".to_string(),
+                        value_example: "[ 3444, 3445, 3446 ]".to_string(),
                     })
                 }
-            };
+            },
+            team_ips: match proxy_settings.team_ips {
+                Some(res) => res,
+                None => {
+                    return Err(ConfigError::NoGroupKey {
+                        group: "proxy_settings".to_string(),
+                        key: "team_ips".to_string(),
+                        value_example: "[ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]".to_string(),
+                    })
+                }
+            },
+            targets: {
+                let targets = match proxy_settings.targets {
+                    Some(res) => res,
+                    None => {
+                        return Err(ConfigError::NoKey {
+                            key: "targets".to_string(),
+                        })
+                    }
+                };
 
-            let mut result: Vec<Target> = Vec::new();
+                let mut result: Vec<Target> = Vec::new();
 
-            for target in targets.iter() {
-                result.push(Target {
-                    port: match target.clone().port {
-                        Some(res) => res,
-                        None => {
-                            return Err(ConfigError::NoListElement {
-                                list_name: "targets".to_string(),
-                                element_example: "{ team_ip: 127.0.0.1, port: 4554 }".to_string(),
-                            })
-                        }
-                    },
-                    team_ip: match target.clone().team_ip {
-                        Some(res) => res,
-                        None => {
-                            return Err(ConfigError::NoListElement {
-                                list_name: "targets".to_string(),
-                                element_example: "{ team_ip: 127.0.0.1, port: 4554 }".to_string(),
-                            })
-                        }
-                    },
-                })
-            }
+                for target in targets.iter() {
+                    result.push(Target {
+                        port: match target.clone().port {
+                            Some(res) => res,
+                            None => {
+                                return Err(ConfigError::NoListElement {
+                                    list_name: "targets".to_string(),
+                                    element_example: "{ team_ip: 127.0.0.1, port: 4554 }"
+                                        .to_string(),
+                                })
+                            }
+                        },
+                        team_ip: match target.clone().team_ip {
+                            Some(res) => res,
+                            None => {
+                                return Err(ConfigError::NoListElement {
+                                    list_name: "targets".to_string(),
+                                    element_example: "{ team_ip: 127.0.0.1, port: 4554 }"
+                                        .to_string(),
+                                })
+                            }
+                        },
+                    })
+                }
 
-            result
-        },
-    })
+                result
+            },
+        })
+    }
 }
 
 fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {

@@ -63,7 +63,7 @@ impl Proxy {
 
         let mut changed_uri = Uri::builder().scheme("http").authority(host);
 
-        for target in self.config.targets.iter() {
+        for target in self.config.clone().targets().iter() {
             if port == target.port {
                 changed_uri = changed_uri.authority(target.team_ip.clone() + ":" + split[1]);
 

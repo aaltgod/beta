@@ -41,7 +41,7 @@ async fn main() -> () {
             return;
         }
     };
-    let proxy_settings_config = match config::build_proxy_settings_config() {
+    let proxy_settings_config = match config::ProxySettingsConfig::new() {
         Ok(res) => res,
         Err(e) => {
             error!("couldn't build proxy settings config: {}", e);
