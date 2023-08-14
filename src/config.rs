@@ -167,7 +167,14 @@ impl ProxySettingsConfig {
         std::thread::spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(2));
 
-            let updated_config = self.clone().build().unwrap();
+            let updated_config = match self.clone().build() {
+                Ok(res) => res,
+                Err(e) => {
+                    error!("Got error, proxy settings config changes will not be applied: {e}");
+
+                    continue
+                }
+            };
 
             let mut found_equals = 0;
 
@@ -185,7 +192,7 @@ impl ProxySettingsConfig {
             if !found_equals.eq(&self.targets.len())
                 || !self.targets.len().eq(&updated_config.targets.len())
             {
-                warn!("GOT CHANGES IN PROXY SETTINGS CONFIG");
+                warn!("proxy settings config changes applied");
                 self.targets = updated_config.targets;
             }
         });
