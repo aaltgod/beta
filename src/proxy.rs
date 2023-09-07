@@ -2,9 +2,11 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 
+use http::uri::Scheme;
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
+use hyper_tls::HttpsConnector;
 
 use crate::cache::Cache;
 use crate::config::ProxySettingsConfig;
@@ -41,35 +43,62 @@ impl Proxy {
 
         info!("HOST {}", host);
 
-        let split: Vec<&str> = host.split(":").collect();
-        if split.len() != 2 {
-            return Err(ProxyError::Changer {
-                method_name: "host.split".to_string(),
-                description: "host is invalid".to_string(),
-                error: anyhow!("Host is invalid: {:?}", host),
-            });
-        }
+        let changed_uri_builder = match uri.scheme() {
+            Some(scheme) if scheme == &Scheme::HTTP => {
+                let split: Vec<&str> = host.split(":").collect();
 
-        let port: u32 = match split[1].trim().parse() {
-            Ok(res) => res,
-            Err(e) => {
+                if split.len() != 2 {
+                    return Err(ProxyError::Changer {
+                        method_name: "host.split".to_string(),
+                        description: "host is invalid".to_string(),
+                        error: anyhow!("Host is invalid: {:?}", host),
+                    });
+                }
+
+                let port: u32 = match split[1].trim().parse() {
+                    Ok(res) => res,
+                    Err(e) => {
+                        return Err(ProxyError::Changer {
+                            method_name: "split.parse".to_string(),
+                            description: "couldn't parse port".to_string(),
+                            error: e.into(),
+                        });
+                    }
+                };
+
+                let mut host = String::default();
+
+                for target in self.config.clone().targets().iter() {
+                    if port == target.port {
+                        host = target.team_host.clone() + ":" + split[1];
+
+                        break;
+                    }
+                }
+
+                Uri::builder().scheme(Scheme::HTTP).authority(host)
+            }
+            Some(scheme) if scheme == &Scheme::HTTPS => {
+                let mut host = String::default();
+
+                for target in self.config.clone().targets().iter() {
+                    if target.port == 443 {
+                        host = target.team_host.clone();
+
+                        break;
+                    }
+                }
+
+                Uri::builder().scheme(Scheme::HTTPS).authority(host)
+            }
+            _ => {
                 return Err(ProxyError::Changer {
-                    method_name: "split.parse".to_string(),
-                    description: "couldn't parse port".to_string(),
-                    error: e.into(),
-                });
+                    method_name: "scheme".to_string(),
+                    description: "unexpected scheme".to_string(),
+                    error: anyhow!("unexpected scheme"),
+                })
             }
         };
-
-        let mut changed_uri = Uri::builder().scheme("http").authority(host);
-
-        for target in self.config.clone().targets().iter() {
-            if port == target.port {
-                changed_uri = changed_uri.authority(target.team_ip.clone() + ":" + split[1]);
-
-                break;
-            }
-        }
 
         let path = match uri.path_and_query() {
             Some(res) => res.as_str(),
@@ -145,7 +174,7 @@ impl Proxy {
                 info!("CHANGED PATH:  {:?}", changed_path);
             }
 
-            *uri = match changed_uri.path_and_query(changed_path).build() {
+            *uri = match changed_uri_builder.path_and_query(changed_path).build() {
                 Ok(res) => res,
                 Err(e) => {
                     return Err(ProxyError::Changer {
@@ -159,7 +188,7 @@ impl Proxy {
             return Ok(());
         };
 
-        *uri = match changed_uri.path_and_query(path).build() {
+        *uri = match changed_uri_builder.path_and_query(path).build() {
             Ok(res) => res,
             Err(e) => {
                 return Err(ProxyError::Changer {
@@ -394,8 +423,15 @@ impl Proxy {
         info!("CHANGED URI {:?}", uri);
 
         let mut changed_host = uri.host().unwrap().to_string();
-        changed_host.push_str(":");
-        changed_host.push_str(uri.port().unwrap().as_str());
+
+        match uri.scheme() {
+            Some(scheme) if scheme == &Scheme::HTTPS => (),
+            Some(scheme) if scheme == &Scheme::HTTP => {
+                changed_host.push_str(":");
+                changed_host.push_str(uri.port().unwrap().as_str());
+            }
+            _ => (),
+        }
 
         headers.insert(
             "host",
@@ -488,7 +524,7 @@ impl Proxy {
 
         let mut target_service_resp = match Client::builder()
             .pool_idle_timeout(Duration::from_secs(10))
-            .build_http()
+            .build(HttpsConnector::new())
             .request(changed_req)
             .await
         {

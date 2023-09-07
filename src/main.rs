@@ -3,6 +3,7 @@ pub mod config;
 pub mod errors;
 pub mod handlers;
 pub mod helpers;
+pub mod iptables_manager;
 pub mod metrics;
 pub mod proxy;
 pub mod server;
@@ -41,6 +42,7 @@ async fn main() -> () {
             return;
         }
     };
+
     let proxy_settings_config = match config::ProxySettingsConfig::new() {
         Ok(res) => res,
         Err(e) => {
@@ -48,6 +50,18 @@ async fn main() -> () {
             return;
         }
     };
+
+    let iptables_manager = match iptables_manager::Manager::new(
+        secrets_config.proxy_port,
+        proxy_settings_config.clone(),
+    ) {
+        Ok(res) => res,
+        Err(e) => {
+            error!("coudn't build iptables_manager: {e}");
+            return;
+        }
+    };
+    iptables_manager.watch_for_proxy_settings();
 
     let redis_client = match redis::Client::open(format!(
         "redis://:{}@{}",

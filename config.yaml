@@ -2,14 +2,14 @@ secrets:
   redis_addr: ${REDIS_HOST}:${REDIS_PORT}
   redis_password: ${REDIS_PASSWORD}
 
-  proxy_addr: 0.0.0.0:1337
-  metrics_addr: 0.0.0.0:8989
+  proxy_port: ${PROXY_PORT}
+  proxy_addr: ${HOST}:${PROXY_PORT}
 
+  metrics_addr: ${HOST}:${METRICS_PORT}
+
+# real-time config
 proxy_settings:
-  service_ports: [3444, 3445, 3446]
-
-  team_ips: [10.0.12.23, 10.0.12.24, 10.0.12.25]
-
   targets:
-      - { team_ip: 10.136.179.1, port: 4554 }
-      - { team_ip: 10.0.13.23, port: 4555 }
+    - { team_host: 10.136.179.121, port: 24201 }
+    - { team_host: 10.136.179.121, port: 2222 }
+    - { team_host: "service1.team1.org", port: 443 }

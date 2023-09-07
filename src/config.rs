@@ -1,7 +1,24 @@
-use serde::Deserialize;
-use std::{fs::File, thread};
+use anyhow::Error;
+use lazy_static::lazy_static;
 
-use crate::{errors::ConfigError, helpers::ENV_VAR_REGEX};
+use regex::Regex;
+use serde::Deserialize;
+use std::marker::{Send, Sync};
+use std::sync::mpsc::SyncSender;
+use std::{
+    fs::File,
+    sync::{
+        mpsc::{sync_channel, Receiver},
+        Arc, Mutex,
+    },
+    thread, vec,
+};
+
+use crate::errors::ConfigError;
+
+lazy_static! {
+    pub static ref ENV_VAR_REGEX: Regex = Regex::new(r"\$\{([\w]*)\}").unwrap();
+}
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct SecretsFromReader {
@@ -12,6 +29,7 @@ struct SecretsFromReader {
 struct Secrets {
     redis_addr: Option<String>,
     redis_password: Option<String>,
+    proxy_port: Option<String>,
     proxy_addr: Option<String>,
     metrics_addr: Option<String>,
 }
@@ -23,15 +41,13 @@ struct ProxySettingsFromReader {
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct ProxySettings {
-    service_ports: Option<Vec<u32>>,
-    team_ips: Option<Vec<String>>,
     targets: Option<Vec<TargetFromReader>>,
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct TargetFromReader {
     port: Option<u32>,
-    team_ip: Option<String>,
+    team_host: Option<String>,
 }
 
 /// Config for env variables. It is used to initialize.
@@ -39,22 +55,30 @@ struct TargetFromReader {
 pub struct SecretsConfig {
     pub redis_addr: String,
     pub redis_password: String,
+    pub proxy_port: u32,
     pub proxy_addr: String,
     pub metrics_addr: String,
 }
 
-/// Config for proxy settings.
 #[derive(Default, Debug, Clone)]
-pub struct ProxySettingsConfig {
-    service_ports: Vec<u32>,
-    team_ips: Vec<String>,
-    targets: Vec<Target>,
+pub struct HTTPSTarget {
+    pub team_host: String,
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct Target {
     pub port: u32,
-    pub team_ip: String,
+    pub team_host: String,
+}
+
+impl PartialEq for Target {
+    fn eq(&self, other: &Self) -> bool {
+        self.port.eq(&other.port) && self.team_host.eq(&other.team_host)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.port.ne(&other.port) || self.team_host.ne(&other.team_host)
+    }
 }
 
 fn open_file(path: &str) -> Result<File, ConfigError> {
@@ -92,12 +116,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
 
     Ok(SecretsConfig {
         redis_addr: match secrets.redis_addr {
-            Some(res) => match build_envs_from_str(&res) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(e);
-                }
-            },
+            Some(res) => build_envs_from_str(&res)?,
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -107,12 +126,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
             }
         },
         redis_password: match secrets.redis_password {
-            Some(res) => match build_envs_from_str(&res) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(e);
-                }
-            },
+            Some(res) => build_envs_from_str(&res)?,
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -121,8 +135,25 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
                 });
             }
         },
+        proxy_port: match secrets.proxy_port {
+            Some(res) => {
+                build_envs_from_str(&res)?
+                    .parse::<u32>()
+                    .map_err(|e| ConfigError::Etc {
+                        description: "couldn't parse PROXY_PORT in .env".to_string(),
+                        error: e.into(),
+                    })?
+            }
+            None => {
+                return Err(ConfigError::NoGroupKey {
+                    group: "secrets".to_string(),
+                    key: "proxy_port".to_string(),
+                    value_example: "1337".to_string(),
+                });
+            }
+        },
         proxy_addr: match secrets.proxy_addr {
-            Some(res) => res,
+            Some(res) => build_envs_from_str(&res)?,
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -132,7 +163,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
             }
         },
         metrics_addr: match secrets.metrics_addr {
-            Some(res) => res,
+            Some(res) => build_envs_from_str(&res)?,
             None => {
                 return Err(ConfigError::NoGroupKey {
                     group: "secrets".to_string(),
@@ -144,80 +175,97 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
     })
 }
 
+/// Config for proxy settings.
+pub struct ProxySettingsConfig {
+    targets: Arc<Mutex<Vec<Target>>>,
+    receiver: Arc<Mutex<Receiver<Result<Event, notify::Error>>>>,
+}
+
+impl Clone for ProxySettingsConfig {
+    fn clone(&self) -> Self {
+        ProxySettingsConfig {
+            targets: self.targets.clone(),
+            receiver: Arc::clone(&self.receiver),
+        }
+    }
+}
+
 impl ProxySettingsConfig {
     pub fn new() -> Result<Self, ConfigError> {
-        let mut c = ProxySettingsConfig {
-            service_ports: vec![],
-            team_ips: vec![],
-            targets: vec![],
+        let (sender, receiver) = sync_channel(1);
+
+        let c = ProxySettingsConfig {
+            targets: Arc::new(Mutex::new(vec![])),
+            receiver: Arc::new(Mutex::new(receiver)),
         };
 
-        let build_result = c.clone().build()?;
-
-        c.service_ports = build_result.service_ports;
-        c.targets = build_result.targets;
-        c.team_ips = build_result.team_ips;
-
-        c.clone().watch();
+        c.channel(sender.clone()).map_err(|e| {
+            return ConfigError::Etc {
+                description: "channel".to_string(),
+                error: e,
+            };
+        })?;
 
         Ok(c)
     }
 
-    fn watch(mut self) {
+    fn channel(&self, sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
+        let cloned_self = self.clone();
+
         std::thread::spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(2));
 
-            let updated_config = match self.clone().build() {
+            let mut current_targets = cloned_self.targets.lock().unwrap();
+            let new_targets = match cloned_self.build() {
                 Ok(res) => res,
                 Err(e) => {
-                    error!("Got error, proxy settings config changes will not be applied: {e}");
+                    error!("couldn't build config with updates: {e}\nPlease, look at `proxy_settings` section in config.yaml.");
 
-                    continue
+                    continue;
                 }
             };
 
-            let mut found_equals = 0;
-
-            for target in self.targets.iter() {
-                for updated_target in updated_config.targets.iter() {
-                    if updated_target.port.eq(&target.port)
-                        && updated_target.team_ip.eq(&target.team_ip)
-                    {
-                        found_equals += 1;
-                        break;
-                    }
+            let mut added_targets = vec![];
+            for new_target in new_targets.iter() {
+                if !current_targets.contains(new_target) {
+                    added_targets.push(new_target.to_owned())
                 }
             }
 
-            if !found_equals.eq(&self.targets.len())
-                || !self.targets.len().eq(&updated_config.targets.len())
-            {
-                warn!("proxy settings config changes applied");
-                self.targets = updated_config.targets;
+            let mut removed_targets: Vec<Target> = Vec::new();
+            for current_target in current_targets.iter() {
+                if !new_targets.contains(current_target) {
+                    removed_targets.push(current_target.to_owned())
+                }
+            }
+
+            if !removed_targets.is_empty() || !added_targets.is_empty() {
+                *current_targets = new_targets;
+
+                sender.send(Ok(Event::TargetsModify)).unwrap();
             }
         });
+
+        Ok(())
     }
 
-    pub fn services_ports(self) -> Vec<u32> {
-        self.service_ports
+    pub fn recv(&self) -> Result<Event, notify::Error> {
+        Arc::clone(&self.receiver).lock().unwrap().recv().unwrap()
     }
 
-    pub fn targets(self) -> Vec<Target> {
-        self.targets
+    pub fn targets(&self) -> Vec<Target> {
+        let cloned_targets = Arc::clone(&self.targets);
+        let targets = cloned_targets.lock().unwrap().to_vec();
+        targets
     }
 
-    fn build(self) -> Result<ProxySettingsConfig, ConfigError> {
+    fn build(&self) -> Result<Vec<Target>, ConfigError> {
         let config_file = open_file("config.yaml")?;
-        let config_from_reader: ProxySettingsFromReader = match serde_yaml::from_reader(config_file)
-        {
-            Ok(res) => res,
-            Err(e) => {
-                return Err(ConfigError::Etc {
-                    description: "couldn't read config values".to_string(),
-                    error: e.into(),
-                })
-            }
-        };
+        let config_from_reader: ProxySettingsFromReader = serde_yaml::from_reader(config_file)
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't read config values".to_string(),
+                error: e.into(),
+            })?;
 
         let proxy_settings = match config_from_reader.proxy_settings {
             Some(res) => res,
@@ -228,67 +276,45 @@ impl ProxySettingsConfig {
             }
         };
 
-        Ok(ProxySettingsConfig {
-            service_ports: match proxy_settings.service_ports {
+        let targets = {
+            let targets = match proxy_settings.clone().targets {
                 Some(res) => res,
                 None => {
-                    return Err(ConfigError::NoGroupKey {
-                        group: "proxy_settings".to_string(),
-                        key: "service_ports".to_string(),
-                        value_example: "[ 3444, 3445, 3446 ]".to_string(),
+                    return Err(ConfigError::NoKey {
+                        key: "targets".to_string(),
                     })
                 }
-            },
-            team_ips: match proxy_settings.team_ips {
-                Some(res) => res,
-                None => {
-                    return Err(ConfigError::NoGroupKey {
-                        group: "proxy_settings".to_string(),
-                        key: "team_ips".to_string(),
-                        value_example: "[ 10.0.12.23, 10.0.12.24, 10.0.12.25 ]".to_string(),
-                    })
-                }
-            },
-            targets: {
-                let targets = match proxy_settings.targets {
-                    Some(res) => res,
-                    None => {
-                        return Err(ConfigError::NoKey {
-                            key: "targets".to_string(),
-                        })
-                    }
-                };
+            };
 
-                let mut result: Vec<Target> = Vec::new();
+            let mut result: Vec<Target> = Vec::new();
 
-                for target in targets.iter() {
-                    result.push(Target {
-                        port: match target.clone().port {
-                            Some(res) => res,
-                            None => {
-                                return Err(ConfigError::NoListElement {
-                                    list_name: "targets".to_string(),
-                                    element_example: "{ team_ip: 127.0.0.1, port: 4554 }"
-                                        .to_string(),
-                                })
-                            }
-                        },
-                        team_ip: match target.clone().team_ip {
-                            Some(res) => res,
-                            None => {
-                                return Err(ConfigError::NoListElement {
-                                    list_name: "targets".to_string(),
-                                    element_example: "{ team_ip: 127.0.0.1, port: 4554 }"
-                                        .to_string(),
-                                })
-                            }
-                        },
-                    })
-                }
+            for target in targets.iter() {
+                result.push(Target {
+                    port: match target.clone().port {
+                        Some(res) => res,
+                        None => {
+                            return Err(ConfigError::NoListElement {
+                                list_name: "targets".to_string(),
+                                element_example: "{ team_host: 127.0.0.1, port: 4554 }".to_string(),
+                            })
+                        }
+                    },
+                    team_host: match target.clone().team_host {
+                        Some(res) => res,
+                        None => {
+                            return Err(ConfigError::NoListElement {
+                                list_name: "targets".to_string(),
+                                element_example: "{ team_host: 127.0.0.1, port: 4554 }".to_string(),
+                            })
+                        }
+                    },
+                })
+            }
 
-                result
-            },
-        })
+            result
+        };
+
+        Ok(targets)
     }
 }
 
@@ -313,3 +339,11 @@ fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {
 
     Ok(result)
 }
+
+pub enum Event {
+    Any,
+    TargetsModify,
+}
+
+unsafe impl Send for Event {}
+unsafe impl Sync for Event {}

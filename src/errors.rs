@@ -27,12 +27,14 @@ pub enum ConfigError {
         description: String,
         error: anyHowError,
     },
+
     #[error(
         "
         {env_name} is not set in .env
     "
     )]
     Env { env_name: String },
+
     #[error(
         "
         `{key}` is not set, want(example):
@@ -41,6 +43,7 @@ pub enum ConfigError {
     "
     )]
     NoKey { key: String },
+
     #[error(
         "
         `{key}` is not set, want(example):
@@ -54,6 +57,7 @@ pub enum ConfigError {
         key: String,
         value_example: String,
     },
+
     #[error(
         "
         an element in `{list_name}` is not set or set not correctly, want(example):
