@@ -1,12 +1,14 @@
+use std::num::ParseIntError;
 use std::time::Duration;
 
 use anyhow::anyhow;
-
 use http::uri::Scheme;
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 use hyper_tls::HttpsConnector;
+use lazy_static::lazy_static;
+use regex::Regex;
 
 use crate::cache::Cache;
 use crate::config::ProxySettingsConfig;
@@ -17,6 +19,12 @@ use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
+
+lazy_static! {
+    pub static ref REGEX_DOMAIN_NAME: Regex =
+        Regex::new(r"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+)(?:[a-zA-Z]{2,6})$")
+            .unwrap();
+}
 
 #[derive(Clone)]
 pub struct Proxy {
@@ -29,76 +37,15 @@ impl Proxy {
         Proxy { config, cache }
     }
 
-    async fn change_uri(&self, uri: &mut Uri, host: HeaderValue) -> Result<(), ProxyError> {
-        let host = match host.to_str() {
-            Ok(res) => res,
-            Err(e) => {
-                return Err(ProxyError::Changer {
-                    method_name: "host.to_str".to_string(),
-                    description: "couldn't parse host".to_string(),
-                    error: e.into(),
-                });
-            }
-        };
-
+    async fn change_uri(
+        &self,
+        uri: &mut Uri,
+        host: &str,
+        scheme: Scheme,
+    ) -> Result<(), ProxyError> {
         info!("HOST {}", host);
 
-        let changed_uri_builder = match uri.scheme() {
-            Some(scheme) if scheme == &Scheme::HTTP => {
-                let split: Vec<&str> = host.split(":").collect();
-
-                if split.len() != 2 {
-                    return Err(ProxyError::Changer {
-                        method_name: "host.split".to_string(),
-                        description: "host is invalid".to_string(),
-                        error: anyhow!("Host is invalid: {:?}", host),
-                    });
-                }
-
-                let port: u32 = match split[1].trim().parse() {
-                    Ok(res) => res,
-                    Err(e) => {
-                        return Err(ProxyError::Changer {
-                            method_name: "split.parse".to_string(),
-                            description: "couldn't parse port".to_string(),
-                            error: e.into(),
-                        });
-                    }
-                };
-
-                let mut host = String::default();
-
-                for target in self.config.clone().targets().iter() {
-                    if port == target.port {
-                        host = target.team_host.clone() + ":" + split[1];
-
-                        break;
-                    }
-                }
-
-                Uri::builder().scheme(Scheme::HTTP).authority(host)
-            }
-            Some(scheme) if scheme == &Scheme::HTTPS => {
-                let mut host = String::default();
-
-                for target in self.config.clone().targets().iter() {
-                    if target.port == 443 {
-                        host = target.team_host.clone();
-
-                        break;
-                    }
-                }
-
-                Uri::builder().scheme(Scheme::HTTPS).authority(host)
-            }
-            _ => {
-                return Err(ProxyError::Changer {
-                    method_name: "scheme".to_string(),
-                    description: "unexpected scheme".to_string(),
-                    error: anyhow!("unexpected scheme"),
-                })
-            }
-        };
+        let changed_uri_builder = Uri::builder().scheme(scheme).authority(host);
 
         let path = match uri.path_and_query() {
             Some(res) => res.as_str(),
@@ -399,7 +346,7 @@ impl Proxy {
         };
 
         let host = match headers.get("host") {
-            Some(res) => res,
+            Some(res) => res.to_str().unwrap(),
             None => {
                 return Err(ProxyError::Changer {
                     method_name: "headers.get".to_string(),
@@ -409,29 +356,69 @@ impl Proxy {
             }
         };
 
-        match self.change_uri(&mut uri, host.clone()).await {
-            Ok(_) => (),
-            Err(e) => {
+        info!("HOST {}", host);
+
+        let (changed_host, scheme) = if host.contains(&":") {
+            let split: Vec<&str> = host.split(":").collect();
+
+            if split.len() != 2 {
                 return Err(ProxyError::Changer {
-                    method_name: "change_uri".to_string(),
-                    description: "couldn't change uri".to_string(),
-                    error: e.into(),
+                    method_name: "host.split".to_string(),
+                    description: "host is invalid".to_string(),
+                    error: anyhow!("Host is invalid: {:?}", host),
                 });
             }
+
+            let port: u32 =
+                split[1]
+                    .trim()
+                    .parse()
+                    .map_err(|e: ParseIntError| ProxyError::Changer {
+                        method_name: "split.parse".to_string(),
+                        description: "couldn't parse port".to_string(),
+                        error: e.into(),
+                    })?;
+
+            let mut host = String::default();
+
+            for target in self.config.clone().targets().iter() {
+                if port == target.port {
+                    host = target.team_host.clone() + ":" + split[1];
+
+                    break;
+                }
+            }
+
+            (host, Scheme::HTTP)
+        } else if REGEX_DOMAIN_NAME.clone().captures(&host).is_some() {
+            let mut host = String::default();
+
+            for target in self.config.clone().targets().iter() {
+                if target.port == 443 {
+                    host = target.team_host.clone();
+
+                    break;
+                }
+            }
+
+            (host, Scheme::HTTPS)
+        } else {
+            return Err(ProxyError::Changer {
+                method_name: "contains".to_string(),
+                description: "unexpected host".to_string(),
+                error: anyhow!("unexpected host: {:?}", uri.host()),
+            });
         };
 
+        self.change_uri(&mut uri, changed_host.as_str(), scheme)
+            .await
+            .map_err(|e| ProxyError::Changer {
+                method_name: "change_uri".to_string(),
+                description: "couldn't change uri".to_string(),
+                error: e.into(),
+            })?;
+
         info!("CHANGED URI {:?}", uri);
-
-        let mut changed_host = uri.host().unwrap().to_string();
-
-        match uri.scheme() {
-            Some(scheme) if scheme == &Scheme::HTTPS => (),
-            Some(scheme) if scheme == &Scheme::HTTP => {
-                changed_host.push_str(":");
-                changed_host.push_str(uri.port().unwrap().as_str());
-            }
-            _ => (),
-        }
 
         headers.insert(
             "host",
@@ -564,7 +551,7 @@ impl Proxy {
         }
     }
 
-    async fn proccess(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    async fn process(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         match self.handle_request(req).await {
             Ok(res) => {
                 HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
@@ -576,7 +563,7 @@ impl Proxy {
 
                 HANDLED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
 
-                Ok(hyper::Response::default())
+                Ok(Response::default())
             }
         }
     }
@@ -586,15 +573,18 @@ pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) 
     let proxy = Proxy::new(config, cache);
     let make_service = make_service_fn(move |_| {
         let p = proxy.clone();
-        async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().proccess(req))) }
+        async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().process(req))) }
     });
 
     let addr = proxy_addr.parse().expect("couldn't parse proxy address");
-    let server = HTTPServer::bind(&addr).serve(make_service);
+    let server = HTTPServer::bind(&addr)
+        // .executor(executor)
+        .http1_title_case_headers(true)
+        .serve(make_service);
 
-    warn!("start proxy on address: {}", addr);
+    warn!("start proxy on address: {addr}");
 
     if let Err(e) = server.await {
-        error!("Fatal proxy error: {}", e);
+        error!("Fatal proxy error: {e}");
     }
 }

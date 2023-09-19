@@ -10,6 +10,4 @@ secrets:
 # real-time config
 proxy_settings:
   targets:
-    - { team_host: 10.136.179.121, port: 24201 }
-    - { team_host: 10.136.179.121, port: 2222 }
-    - { team_host: "service1.team1.org", port: 443 }
+    - { team_host: 10.136.179.131, port: 1233 }

@@ -2,3 +2,4 @@
 *.py
 /redis-data
 /redis.conf
+/.idea

@@ -1,11 +1,11 @@
-use std::{fmt::Display, thread, vec};
+use std::{thread, vec};
 
 use anyhow::anyhow;
 use iptables::IPTables;
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use crate::config::{Event, ProxySettingsConfig};
+use crate::config::{Event, ProxySettingsConfig, Target};
 
 const CHAIN_LASTOCHKA: &str = "LASTOCHKA";
 const CHAIN_PREROUTING: &str = "PREROUTING";
@@ -19,50 +19,37 @@ lazy_static! {
 
 pub struct Manager {
     iptables: IPTables,
-    proxy_settings_config: ProxySettingsConfig,
-    proxy_port: u32,
 }
 
 impl Manager {
-    pub fn new(proxy_port: u32, config: ProxySettingsConfig) -> Result<Self, anyhow::Error> {
-        let res = iptables::new(false).map_err(|e| anyhow!("{e}"))?;
-
-        let manager: Manager = Manager {
-            iptables: res,
-            proxy_settings_config: config,
-            proxy_port,
-        };
-
-        manager
-            .add_lastocka_chain()
-            .map_err(|e| anyhow!("add_lastocka_chain: {e}"))?;
-
-        Ok(manager)
+    pub fn new() -> Result<Self, anyhow::Error> {
+        Ok(Manager {
+            iptables: iptables::new(false).map_err(|e| anyhow!("{e}"))?,
+        })
     }
 
-    pub fn watch_for_proxy_settings(self) {
+    pub fn watch_for_proxy_settings(
+        self,
+        proxy_port: u32,
+        config: ProxySettingsConfig,
+    ) -> Result<(), anyhow::Error> {
+        self.add_lastocka_chain()
+            .map_err(|e| anyhow!("add_lastocka_chain: {e}"))?;
+
         std::thread::spawn(move || loop {
-            match self.proxy_settings_config.recv() {
+            match config.recv() {
                 Ok(event) => match event {
                     Event::TargetsModify => {
-                        let targets = self.proxy_settings_config.targets();
-                        let mut rules_info: Vec<RuleInfo> = vec![];
+                        let targets: &Vec<Target> = &config.targets();
 
-                        for target in targets {
-                            rules_info.push(RuleInfo {
-                                port_from: target.port,
-                                port_to: self.proxy_port,
-                            })
-                        }
-
-                        match self.process(&rules_info) {
+                        match self.process(proxy_port, targets) {
                             Ok(_) => warn!("successfully processed iptables changes"),
                             Err(e) => {
                                 error!("failed processed iptables changes: {e}\n\nwill try again in 3 seconds");
 
                                 thread::sleep(std::time::Duration::from_secs(3));
 
-                                match self.process(&rules_info) {
+                                match self.process(proxy_port, targets) {
                                     Ok(_) => {
                                         warn!("successfully processed iptables changes after retry")
                                     }
@@ -78,12 +65,74 @@ impl Manager {
                 Err(e) => panic!("got error from sender: {e}"),
             }
         });
+
+        Ok(())
     }
 
-    fn process(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
-        self.process_prerouting(rules_info)
+    pub fn flush(&self) -> Result<(), anyhow::Error> {
+        let mut rules_info = self
+            .get_rules_info(CHAIN_PREROUTING)
+            .map_err(|e| anyhow!("get_rules_info: {e}"))?;
+
+        for rule_info in rules_info.iter() {
+            self.iptables
+                .delete_all("nat", CHAIN_PREROUTING, &rule_info.to_rule())
+                .map_err(|e| anyhow!("delete: {e}"))?;
+        }
+
+        warn!("{CHAIN_PREROUTING} rules were deleted");
+
+        rules_info = self
+            .get_rules_info(CHAIN_LASTOCHKA)
+            .map_err(|e| anyhow!("get_rules_info: {e}"))?;
+
+        for rule_info in rules_info.iter() {
+            self.iptables
+                .delete_all("nat", CHAIN_LASTOCHKA, &rule_info.to_rule())
+                .map_err(|e| anyhow!("delete: {e}"))?;
+        }
+
+        // other trash rules
+        let other_rules = self
+            .iptables
+            .list("nat", CHAIN_LASTOCHKA)
+            .map_err(|e| anyhow!("list: {e}"))?;
+
+        for rule in other_rules.iter() {
+            self.iptables
+                .delete_all("nat", CHAIN_LASTOCHKA, &rule)
+                .map_err(|e| anyhow!("delete: {e}"))?;
+        }
+
+        warn!("{CHAIN_LASTOCHKA} rules were deleted");
+
+        self.iptables
+            .delete_chain("nat", CHAIN_LASTOCHKA)
+            .map_err(|e| anyhow!("delete_chain: {e}"))?;
+
+        warn!("{CHAIN_LASTOCHKA} chain was deleted");
+
+        Ok(())
+    }
+
+    fn process(&self, proxy_port: u32, targets: &Vec<Target>) -> Result<(), anyhow::Error> {
+        let prerouting_rules_info: Vec<RuleInfo> = targets
+            .iter()
+            .map(|t| RuleInfo::Prerouting { port_from: t.port })
+            .collect();
+
+        self.process_prerouting(&prerouting_rules_info)
             .map_err(|e| anyhow!("process_prerouting: {e}"))?;
-        self.process_lastochka(rules_info)
+
+        let lastochka_rules_info: Vec<RuleInfo> = targets
+            .iter()
+            .map(|t| RuleInfo::Lastochka {
+                port_from: t.port,
+                port_to: proxy_port,
+            })
+            .collect();
+
+        self.process_lastochka(&lastochka_rules_info)
             .map_err(|e| anyhow!("process_lastochka: {e}"))?;
 
         Ok(())
@@ -138,13 +187,11 @@ impl Manager {
         existing_rules_info: &Vec<RuleInfo>,
         new_rules_info: &Vec<RuleInfo>,
     ) -> Vec<RuleInfo> {
-        let mut rules_info_to_add: Vec<RuleInfo> = vec![];
-
-        for rule_info in new_rules_info.iter() {
-            if !existing_rules_info.contains(&rule_info) {
-                rules_info_to_add.push(*rule_info)
-            }
-        }
+        let rules_info_to_add: Vec<RuleInfo> = new_rules_info
+            .iter()
+            .filter(|info| !existing_rules_info.contains(&info))
+            .map(|info| *info)
+            .collect();
 
         rules_info_to_add
     }
@@ -189,7 +236,7 @@ impl Manager {
                         continue;
                     }
                 },
-                CHAIN_PREROUTING => match RuleInfo::from_prerouting_rule(self.proxy_port, rule) {
+                CHAIN_PREROUTING => match RuleInfo::from_prerouting_rule(rule) {
                     Some(res) => res,
                     None => {
                         continue;
@@ -209,6 +256,8 @@ impl Manager {
     }
 
     fn add_lastocka_chain(&self) -> Result<(), anyhow::Error> {
+        warn!("try to add {CHAIN_LASTOCHKA} chain into iptables");
+
         if self
             .iptables
             .chain_exists("nat", CHAIN_LASTOCHKA)
@@ -217,15 +266,20 @@ impl Manager {
             return Ok(());
         }
 
-        Ok(
-            match self
-                .iptables
-                .execute("nat", format!("-N {CHAIN_LASTOCHKA}").as_str())
-            {
-                Ok(res) => warn!("created {CHAIN_LASTOCHKA} chain {:?}", res),
-                Err(e) => return Err(anyhow::anyhow!("execute: {e}")),
-            },
-        )
+        return match self
+            .iptables
+            .execute("nat", format!("-N {CHAIN_LASTOCHKA}").as_str())
+        {
+            Ok(res) => {
+                if res.status.success() {
+                    warn!("created {CHAIN_LASTOCHKA} chain {:?}", res);
+                    return Ok(());
+                }
+
+                Err(anyhow!("execute: {}", res.status.to_string()))
+            }
+            Err(e) => Err(anyhow!("execute: {e}")),
+        };
     }
 
     fn add_rules_into_prerouting(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
@@ -239,7 +293,7 @@ impl Manager {
         }
 
         for rule_info in rules_info.iter() {
-            let rule = rule_info.to_prerouting_rule();
+            let rule = rule_info.to_rule();
 
             match self.iptables.append_unique("nat", CHAIN_PREROUTING, &rule) {
                 Ok(_) => (),
@@ -263,7 +317,7 @@ impl Manager {
         }
 
         for rule_info in rules_info.iter() {
-            let rule = rule_info.to_lastochka_rule();
+            let rule = rule_info.to_rule();
 
             match self.iptables.append_unique("nat", CHAIN_LASTOCHKA, &rule) {
                 Ok(_) => (),
@@ -285,7 +339,7 @@ impl Manager {
         rules_info: &Vec<RuleInfo>,
     ) -> Result<(), anyhow::Error> {
         for info in rules_info.iter() {
-            let rule = info.to_prerouting_rule();
+            let rule = info.to_rule();
 
             self.iptables
                 .delete_all("nat", CHAIN_PREROUTING, rule.as_str())
@@ -299,7 +353,7 @@ impl Manager {
 
     fn delete_rules_from_lastochka(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
         for info in rules_info.iter() {
-            let rule = info.to_lastochka_rule();
+            let rule = info.to_rule();
 
             self.iptables
                 .delete_all("nat", CHAIN_LASTOCHKA, rule.as_str())
@@ -310,57 +364,52 @@ impl Manager {
 
         Ok(())
     }
-
-    pub fn delete_all_rules(self) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-
-    pub fn flush_all(self) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RuleInfo {
-    pub port_from: u32,
-    pub port_to: u32,
-}
-
-impl Display for RuleInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "`port_from: {}`, `port_to: {})`",
-            self.port_from, self.port_to
-        )
-    }
+#[derive(Debug, Clone, Copy)]
+pub enum RuleInfo {
+    Lastochka { port_from: u32, port_to: u32 },
+    Prerouting { port_from: u32 },
 }
 
 impl PartialEq for RuleInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.port_from.eq(&other.port_from) && self.port_to.eq(&other.port_to)
+        match self {
+            Self::Lastochka { port_from, port_to } => {
+                let self_port_from = port_from;
+                let self_port_to = port_to;
+
+                match other {
+                    Self::Lastochka { port_from, port_to } => {
+                        self_port_from.eq(port_from) && self_port_to.eq(port_to)
+                    }
+                    _ => false,
+                }
+            }
+            Self::Prerouting { port_from } => {
+                let self_port_from = port_from;
+
+                match other {
+                    Self::Prerouting { port_from } => self_port_from.eq(port_from),
+                    _ => false,
+                }
+            }
+        }
     }
 
     fn ne(&self, other: &Self) -> bool {
-        self.port_from.ne(&other.port_from) || self.port_to.ne(&other.port_to)
+        !self.eq(other) || !self.eq(other)
     }
 }
 
 impl RuleInfo {
-    pub fn fill_port_to(port: u32) -> Self {
-        RuleInfo {
-            port_from: 0,
-            port_to: port,
-        }
-    }
-
     pub fn from_lastochka_rule(string_rule: &str) -> Option<RuleInfo> {
         let captures = match REGEX_RULE_LASTOCHKA.clone().captures(string_rule) {
             Some(res) => res,
             None => return None,
         };
 
-        return Some(RuleInfo {
+        return Some(RuleInfo::Lastochka {
             port_from: captures
                 .name("port_from")
                 .unwrap()
@@ -378,13 +427,13 @@ impl RuleInfo {
         });
     }
 
-    pub fn from_prerouting_rule(port_to: u32, string_rule: &str) -> Option<RuleInfo> {
+    pub fn from_prerouting_rule(string_rule: &str) -> Option<RuleInfo> {
         let captures = match REGEX_RULE_PREROUTING.clone().captures(string_rule) {
             Some(res) => res,
             None => return None,
         };
 
-        return Some(RuleInfo {
+        return Some(RuleInfo::Prerouting {
             port_from: captures
                 .name("port_from")
                 .unwrap()
@@ -392,22 +441,25 @@ impl RuleInfo {
                 .to_string()
                 .parse::<u32>()
                 .unwrap(),
-            port_to,
         });
     }
 
-    pub fn to_lastochka_rule(&self) -> String {
-        format!(
-            "-p tcp --dport {} -j REDIRECT --to-ports {}",
-            self.port_from, self.port_to
-        )
-    }
-
-    pub fn to_prerouting_rule(&self) -> String {
-        format!("-p tcp --dport {} -j {CHAIN_LASTOCHKA}", self.port_from)
+    pub fn to_rule(&self) -> String {
+        match self {
+            Self::Lastochka { port_from, port_to } => format!(
+                "-p tcp --dport {} -j REDIRECT --to-ports {}",
+                port_from, port_to
+            ),
+            Self::Prerouting { port_from } => {
+                format!("-p tcp --dport {} -j {CHAIN_LASTOCHKA}", port_from)
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.port_from.eq(&0) && self.port_to.eq(&0)
+        match self {
+            Self::Lastochka { port_from, port_to } => port_from.eq(&0) && port_to.eq(&0),
+            Self::Prerouting { port_from } => port_from.eq(&0),
+        }
     }
 }
