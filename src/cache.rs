@@ -24,39 +24,26 @@ impl Cache {
     }
 
     pub async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
-        let mut conn = match self.get_conn().await {
-            Ok(res) => res,
-            Err(e) => {
-                return Err(CacheError::Cache {
-                    method_name: "get_conn".to_string(),
-                    error: e.into(),
-                })
-            }
-        };
+        let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
+            method_name: "get_conn".to_string(),
+            error: e.into(),
+        })?;
 
-        match conn.set_nx(key, value).await {
-            Ok(res) => res,
-            Err(e) => {
-                return Err(CacheError::Cache {
-                    method_name: "set_nx".to_string(),
-                    error: e.into(),
-                })
-            }
-        };
+        conn.set_nx(key, value)
+            .await
+            .map_err(|e| CacheError::Cache {
+                method_name: "set_nx".to_string(),
+                error: e.into(),
+            })?;
 
         Ok(())
     }
 
     pub async fn get_flag(&self, key: String) -> Result<String, CacheError> {
-        let mut conn = match self.get_conn().await {
-            Ok(res) => res,
-            Err(e) => {
-                return Err(CacheError::Cache {
-                    method_name: "get_conn".to_string(),
-                    error: e.into(),
-                })
-            }
-        };
+        let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
+            method_name: "get_conn".to_string(),
+            error: e.into(),
+        })?;
 
         let flag = match conn.get(key).await {
             Ok(flag) => flag,

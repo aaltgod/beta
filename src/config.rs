@@ -82,28 +82,22 @@ impl PartialEq for Target {
 }
 
 fn open_file(path: &str) -> Result<File, ConfigError> {
-    match std::fs::File::open(path) {
-        Ok(res) => return Ok(res),
-        Err(e) => {
-            return Err(ConfigError::Etc {
-                description: format!("couldn't open file `{}`", path),
-                error: e.into(),
-            })
-        }
-    }
+    return match std::fs::File::open(path) {
+        Ok(res) => Ok(res),
+        Err(e) => Err(ConfigError::Etc {
+            description: format!("couldn't open file `{}`", path),
+            error: e.into(),
+        }),
+    };
 }
 
 pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
     let config_file = open_file("config.yaml")?;
-    let config_from_reader: SecretsFromReader = match serde_yaml::from_reader(config_file) {
-        Ok(res) => res,
-        Err(e) => {
-            return Err(ConfigError::Etc {
-                description: "couldn't read config values".to_string(),
-                error: e.into(),
-            })
-        }
-    };
+    let config_from_reader: SecretsFromReader =
+        serde_yaml::from_reader(config_file).map_err(|e| ConfigError::Etc {
+            description: "couldn't read config values".to_string(),
+            error: e.into(),
+        })?;
 
     let secrets = match config_from_reader.secrets {
         Some(res) => res,
@@ -175,7 +169,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
     })
 }
 
-/// Config for proxy settings.
+/// Config for proxy settings in real-time.
 pub struct ProxySettingsConfig {
     targets: Arc<Mutex<Vec<Target>>>,
     receiver: Arc<Mutex<Receiver<Result<Event, notify::Error>>>>,
@@ -212,7 +206,7 @@ impl ProxySettingsConfig {
     fn channel(&self, sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
         let cloned_self = self.clone();
 
-        std::thread::spawn(move || loop {
+        thread::spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(2));
 
             let mut current_targets = cloned_self.targets.lock().unwrap();
