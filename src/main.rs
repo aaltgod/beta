@@ -5,7 +5,7 @@ pub mod handlers;
 pub mod helpers;
 pub mod iptables_manager;
 pub mod metrics;
-pub mod proxy;
+pub mod metrics_server;
 pub mod server;
 
 use futures::future;
@@ -38,7 +38,6 @@ async fn main() -> () {
     print_logo();
 
     env_logger::init();
-
 
     let flags: Vec<String> = std::env::args().collect();
 
@@ -107,9 +106,9 @@ async fn main() -> () {
     }
 
     future::join_all(vec![
-        tokio::spawn(async move { server::run(secrets_config.metrics_addr).await }),
+        tokio::spawn(async move { metrics_server::run(secrets_config.metrics_addr).await }),
         tokio::spawn(async move {
-            proxy::run(
+            server::run(
                 secrets_config.proxy_addr,
                 proxy_settings_config,
                 cache::Cache::new(

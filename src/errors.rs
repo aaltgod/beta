@@ -2,7 +2,7 @@ use anyhow::Error as anyHowError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum ProxyError {
+pub enum ServerError {
     #[error("Changer {method_name} `{description}`: {error}")]
     Changer {
         method_name: String,
