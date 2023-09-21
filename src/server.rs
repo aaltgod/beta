@@ -7,8 +7,6 @@ use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 use hyper_tls::HttpsConnector;
-use lazy_static::lazy_static;
-use regex::Regex;
 
 use crate::cache::Cache;
 use crate::config::ProxySettingsConfig;
@@ -19,12 +17,6 @@ use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
-
-lazy_static! {
-    pub static ref REGEX_DOMAIN_NAME: Regex =
-        Regex::new(r"^(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+)(?:[a-zA-Z]{2,6})$")
-            .unwrap();
-}
 
 #[derive(Clone)]
 pub struct Server {
@@ -374,19 +366,18 @@ impl Server {
                 }
             }
 
-            (host, Scheme::HTTP)
-        } else if REGEX_DOMAIN_NAME.clone().captures(&host).is_some() {
-            let mut host = String::default();
-
-            for target in self.config.clone().targets().iter() {
-                if target.port == 443 {
-                    host = target.team_host.clone();
-
-                    break;
-                }
+            if host.len() == 0 {
+                return Err(ServerError::Changer {
+                    method_name: "targets".to_string(),
+                    description: format!(
+                        "couldn't find target when parsing host: {:?}",
+                        uri.host()
+                    ),
+                    error: anyhow!("no port with port {:?} in config", port),
+                });
             }
 
-            (host, Scheme::HTTPS)
+            (host, Scheme::HTTP)
         } else {
             return Err(ServerError::Changer {
                 method_name: "host.contains".to_string(),
@@ -459,7 +450,7 @@ impl Server {
                 req
             }
             Err(e) => {
-                CHANGED_REQUEST_COUNTER.with_label_values(&["FAIL"]).inc();
+                CHANGED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
 
                 return Err(ServerError::Changer {
                     method_name: "change_request".to_string(),
@@ -526,7 +517,7 @@ impl Server {
             Err(e) => {
                 error!("couldn't change response {}", e);
 
-                CHANGED_RESPONSE_COUNTER.with_label_values(&["FAIL"]).inc();
+                CHANGED_RESPONSE_COUNTER.with_label_values(&["ERROR"]).inc();
 
                 return Ok(target_service_resp);
             }
@@ -559,9 +550,7 @@ pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) 
     });
 
     let addr = proxy_addr.parse().expect("couldn't parse proxy address");
-    let server = HTTPServer::bind(&addr)
-        .http1_title_case_headers(true)
-        .serve(make_service);
+    let server = HTTPServer::bind(&addr).serve(make_service);
 
     warn!("start proxy on address: {addr}");
 
