@@ -33,10 +33,10 @@ impl Manager {
         proxy_port: u32,
         config: ProxySettingsConfig,
     ) -> Result<(), anyhow::Error> {
-        self.add_lastocka_chain()
-            .map_err(|e| anyhow!("add_lastocka_chain: {e}"))?;
+        self.add_lastochka_chain()
+            .map_err(|e| anyhow!("add_lastochka_chain: {e}"))?;
 
-        std::thread::spawn(move || loop {
+        thread::spawn(move || loop {
             match config.recv() {
                 Ok(event) => match event {
                     Event::TargetsModify => {
@@ -255,7 +255,7 @@ impl Manager {
         Ok(rules_info)
     }
 
-    fn add_lastocka_chain(&self) -> Result<(), anyhow::Error> {
+    fn add_lastochka_chain(&self) -> Result<(), anyhow::Error> {
         warn!("try to add {CHAIN_LASTOCHKA} chain into iptables");
 
         if self
@@ -288,8 +288,8 @@ impl Manager {
             .chain_exists("nat", CHAIN_LASTOCHKA)
             .map_err(|e| anyhow!("chain_exists: {e}"))?
         {
-            self.add_lastocka_chain()
-                .map_err(|e| anyhow::anyhow!("add_lastocka_chain {e}"))?
+            self.add_lastochka_chain()
+                .map_err(|e| anyhow::anyhow!("add_lastochka_chain {e}"))?
         }
 
         for rule_info in rules_info.iter() {
@@ -312,8 +312,8 @@ impl Manager {
 
     fn add_rules_into_lastochka(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
         if !self.iptables.chain_exists("nat", CHAIN_LASTOCHKA).unwrap() {
-            self.add_lastocka_chain()
-                .map_err(|e| anyhow::anyhow!("add_lastocka_chain {e}"))?
+            self.add_lastochka_chain()
+                .map_err(|e| anyhow::anyhow!("add_lastochka_chain {e}"))?
         }
 
         for rule_info in rules_info.iter() {
