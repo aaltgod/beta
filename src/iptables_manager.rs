@@ -7,14 +7,14 @@ use regex::Regex;
 
 use crate::config::{Event, ProxySettingsConfig, Target};
 
-const CHAIN_LASTOCHKA: &str = "LASTOCHKA";
+const CHAIN_BETA: &str = "BETA";
 const CHAIN_PREROUTING: &str = "PREROUTING";
 
 lazy_static! {
-    pub static ref REGEX_RULE_LASTOCHKA: Regex = Regex::new(
-        r"-A LASTOCHKA -p tcp -m tcp --dport (?P<port_from>\d{1,5}) -j REDIRECT --to-ports (?P<port_to>\d{1,5})").unwrap();
+    pub static ref REGEX_RULE_BETA: Regex = Regex::new(
+        r"-A BETA -p tcp -m tcp --dport (?P<port_from>\d{1,5}) -j REDIRECT --to-ports (?P<port_to>\d{1,5})").unwrap();
     pub static ref REGEX_RULE_PREROUTING: Regex = Regex::new(
-        r"-A PREROUTING -p tcp -m tcp --dport (?P<port_from>\d{1,5}) -j LASTOCHKA").unwrap();
+        r"-A PREROUTING -p tcp -m tcp --dport (?P<port_from>\d{1,5}) -j BETA").unwrap();
 }
 
 pub struct Manager {
@@ -33,8 +33,8 @@ impl Manager {
         proxy_port: u32,
         config: ProxySettingsConfig,
     ) -> Result<(), anyhow::Error> {
-        self.add_lastochka_chain()
-            .map_err(|e| anyhow!("add_lastochka_chain: {e}"))?;
+        self.add_beta_chain()
+            .map_err(|e| anyhow!("add_beta_chain: {e}"))?;
 
         thread::spawn(move || loop {
             match config.recv() {
@@ -83,34 +83,34 @@ impl Manager {
         warn!("{CHAIN_PREROUTING} rules were deleted");
 
         rules_info = self
-            .get_rules_info(CHAIN_LASTOCHKA)
+            .get_rules_info(CHAIN_BETA)
             .map_err(|e| anyhow!("get_rules_info: {e}"))?;
 
         for rule_info in rules_info.iter() {
             self.iptables
-                .delete_all("nat", CHAIN_LASTOCHKA, &rule_info.to_rule())
+                .delete_all("nat", CHAIN_BETA, &rule_info.to_rule())
                 .map_err(|e| anyhow!("delete: {e}"))?;
         }
 
         // other trash rules
         let other_rules = self
             .iptables
-            .list("nat", CHAIN_LASTOCHKA)
+            .list("nat", CHAIN_BETA)
             .map_err(|e| anyhow!("list: {e}"))?;
 
         for rule in other_rules.iter() {
             self.iptables
-                .delete_all("nat", CHAIN_LASTOCHKA, &rule)
+                .delete_all("nat", CHAIN_BETA, &rule)
                 .map_err(|e| anyhow!("delete: {e}"))?;
         }
 
-        warn!("{CHAIN_LASTOCHKA} rules were deleted");
+        warn!("{CHAIN_BETA} rules were deleted");
 
         self.iptables
-            .delete_chain("nat", CHAIN_LASTOCHKA)
+            .delete_chain("nat", CHAIN_BETA)
             .map_err(|e| anyhow!("delete_chain: {e}"))?;
 
-        warn!("{CHAIN_LASTOCHKA} chain was deleted");
+        warn!("{CHAIN_BETA} chain was deleted");
 
         Ok(())
     }
@@ -124,16 +124,16 @@ impl Manager {
         self.process_prerouting(&prerouting_rules_info)
             .map_err(|e| anyhow!("process_prerouting: {e}"))?;
 
-        let lastochka_rules_info: Vec<RuleInfo> = targets
+        let beta_rules_info: Vec<RuleInfo> = targets
             .iter()
-            .map(|t| RuleInfo::Lastochka {
+            .map(|t| RuleInfo::Beta {
                 port_from: t.port,
                 port_to: proxy_port,
             })
             .collect();
 
-        self.process_lastochka(&lastochka_rules_info)
-            .map_err(|e| anyhow!("process_lastochka: {e}"))?;
+        self.process_beta(&beta_rules_info)
+            .map_err(|e| anyhow!("process_beta: {e}"))?;
 
         Ok(())
     }
@@ -160,23 +160,23 @@ impl Manager {
         Ok(())
     }
 
-    fn process_lastochka(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
+    fn process_beta(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
         let existing_rules_info = self
-            .get_rules_info(CHAIN_LASTOCHKA)
+            .get_rules_info(CHAIN_BETA)
             .map_err(|e| anyhow!("get_rules_info: {e}"))?;
 
         let rules_info_to_delete = self.get_rules_info_to_delete(&existing_rules_info, rules_info);
 
         if !rules_info_to_delete.is_empty() {
-            self.delete_rules_from_lastochka(&rules_info_to_delete)
-                .map_err(|e| anyhow!("delete_rules_from_lastochka: {e}"))?
+            self.delete_rules_from_beta(&rules_info_to_delete)
+                .map_err(|e| anyhow!("delete_rules_from_beta: {e}"))?
         }
 
         let rules_info_to_add = self.get_rules_info_to_add(&existing_rules_info, rules_info);
 
         if !rules_info_to_add.is_empty() {
-            self.add_rules_into_lastochka(&rules_info_to_add)
-                .map_err(|e| anyhow!("add_rules_into_lastochka: {e}"))?
+            self.add_rules_into_beta(&rules_info_to_add)
+                .map_err(|e| anyhow!("add_rules_into_beta: {e}"))?
         }
 
         Ok(())
@@ -230,7 +230,7 @@ impl Manager {
 
         for rule in rules.iter() {
             let rule_info = match chain {
-                CHAIN_LASTOCHKA => match RuleInfo::from_lastochka_rule(rule) {
+                CHAIN_BETA => match RuleInfo::from_beta_rule(rule) {
                     Some(res) => res,
                     None => {
                         continue;
@@ -255,12 +255,12 @@ impl Manager {
         Ok(rules_info)
     }
 
-    fn add_lastochka_chain(&self) -> Result<(), anyhow::Error> {
-        warn!("try to add {CHAIN_LASTOCHKA} chain into iptables");
+    fn add_beta_chain(&self) -> Result<(), anyhow::Error> {
+        warn!("try to add {CHAIN_BETA} chain into iptables");
 
         if self
             .iptables
-            .chain_exists("nat", CHAIN_LASTOCHKA)
+            .chain_exists("nat", CHAIN_BETA)
             .map_err(|e| anyhow!("chain_exists: {e}"))?
         {
             return Ok(());
@@ -268,11 +268,11 @@ impl Manager {
 
         return match self
             .iptables
-            .execute("nat", format!("-N {CHAIN_LASTOCHKA}").as_str())
+            .execute("nat", format!("-N {CHAIN_BETA}").as_str())
         {
             Ok(res) => {
                 if res.status.success() {
-                    warn!("created {CHAIN_LASTOCHKA} chain {:?}", res);
+                    warn!("created {CHAIN_BETA} chain {:?}", res);
                     return Ok(());
                 }
 
@@ -285,11 +285,11 @@ impl Manager {
     fn add_rules_into_prerouting(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
         if !self
             .iptables
-            .chain_exists("nat", CHAIN_LASTOCHKA)
+            .chain_exists("nat", CHAIN_BETA)
             .map_err(|e| anyhow!("chain_exists: {e}"))?
         {
-            self.add_lastochka_chain()
-                .map_err(|e| anyhow::anyhow!("add_lastochka_chain {e}"))?
+            self.add_beta_chain()
+                .map_err(|e| anyhow::anyhow!("add_beta_chain {e}"))?
         }
 
         for rule_info in rules_info.iter() {
@@ -310,16 +310,16 @@ impl Manager {
         Ok(())
     }
 
-    fn add_rules_into_lastochka(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
-        if !self.iptables.chain_exists("nat", CHAIN_LASTOCHKA).unwrap() {
-            self.add_lastochka_chain()
-                .map_err(|e| anyhow::anyhow!("add_lastochka_chain {e}"))?
+    fn add_rules_into_beta(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
+        if !self.iptables.chain_exists("nat", CHAIN_BETA).unwrap() {
+            self.add_beta_chain()
+                .map_err(|e| anyhow::anyhow!("add_beta_chain {e}"))?
         }
 
         for rule_info in rules_info.iter() {
             let rule = rule_info.to_rule();
 
-            match self.iptables.append_unique("nat", CHAIN_LASTOCHKA, &rule) {
+            match self.iptables.append_unique("nat", CHAIN_BETA, &rule) {
                 Ok(_) => (),
                 Err(e) => {
                     if e.to_string().ne("the rule exists in the table/chain") {
@@ -328,7 +328,7 @@ impl Manager {
                 }
             }
 
-            warn!("added rule into {CHAIN_LASTOCHKA}:\n {rule}")
+            warn!("added rule into {CHAIN_BETA}:\n {rule}")
         }
 
         Ok(())
@@ -351,15 +351,15 @@ impl Manager {
         Ok(())
     }
 
-    fn delete_rules_from_lastochka(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
+    fn delete_rules_from_beta(&self, rules_info: &Vec<RuleInfo>) -> Result<(), anyhow::Error> {
         for info in rules_info.iter() {
             let rule = info.to_rule();
 
             self.iptables
-                .delete_all("nat", CHAIN_LASTOCHKA, rule.as_str())
+                .delete_all("nat", CHAIN_BETA, rule.as_str())
                 .map_err(|e| anyhow!("delete_all: {e}"))?;
 
-            warn!("deleted rule from {CHAIN_LASTOCHKA}:\n {rule}")
+            warn!("deleted rule from {CHAIN_BETA}:\n {rule}")
         }
 
         Ok(())
@@ -368,19 +368,19 @@ impl Manager {
 
 #[derive(Debug, Clone, Copy)]
 pub enum RuleInfo {
-    Lastochka { port_from: u32, port_to: u32 },
+    Beta { port_from: u32, port_to: u32 },
     Prerouting { port_from: u32 },
 }
 
 impl PartialEq for RuleInfo {
     fn eq(&self, other: &Self) -> bool {
         match self {
-            Self::Lastochka { port_from, port_to } => {
+            Self::Beta { port_from, port_to } => {
                 let self_port_from = port_from;
                 let self_port_to = port_to;
 
                 match other {
-                    Self::Lastochka { port_from, port_to } => {
+                    Self::Beta { port_from, port_to } => {
                         self_port_from.eq(port_from) && self_port_to.eq(port_to)
                     }
                     _ => false,
@@ -403,13 +403,13 @@ impl PartialEq for RuleInfo {
 }
 
 impl RuleInfo {
-    pub fn from_lastochka_rule(string_rule: &str) -> Option<RuleInfo> {
-        let captures = match REGEX_RULE_LASTOCHKA.clone().captures(string_rule) {
+    pub fn from_beta_rule(string_rule: &str) -> Option<RuleInfo> {
+        let captures = match REGEX_RULE_BETA.clone().captures(string_rule) {
             Some(res) => res,
             None => return None,
         };
 
-        return Some(RuleInfo::Lastochka {
+        return Some(RuleInfo::Beta {
             port_from: captures
                 .name("port_from")
                 .unwrap()
@@ -446,19 +446,19 @@ impl RuleInfo {
 
     pub fn to_rule(&self) -> String {
         match self {
-            Self::Lastochka { port_from, port_to } => format!(
+            Self::Beta { port_from, port_to } => format!(
                 "-p tcp --dport {} -j REDIRECT --to-ports {}",
                 port_from, port_to
             ),
             Self::Prerouting { port_from } => {
-                format!("-p tcp --dport {} -j {CHAIN_LASTOCHKA}", port_from)
+                format!("-p tcp --dport {} -j {CHAIN_BETA}", port_from)
             }
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Lastochka { port_from, port_to } => port_from.eq(&0) && port_to.eq(&0),
+            Self::Beta { port_from, port_to } => port_from.eq(&0) && port_to.eq(&0),
             Self::Prerouting { port_from } => port_from.eq(&0),
         }
     }
