@@ -404,7 +404,7 @@ impl Server {
 
             let mut host = String::default();
 
-            for target in self.config.clone().targets().iter() {
+            for target in self.config.targets().iter() {
                 if port == target.port {
                     host = target.team_host.clone() + ":" + split[1];
 
@@ -419,7 +419,7 @@ impl Server {
                         "couldn't find target when parsing host: {:?}",
                         uri.host()
                     ),
-                    error: anyhow!("no port with port {:?} in config", port),
+                    error: anyhow!("no host with port {:?} in config", port),
                 });
             }
 
@@ -590,7 +590,7 @@ impl Server {
 
 pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) {
     let proxy = Server::new(config, cache);
-    let make_service = make_service_fn(move |_| {
+    let make_service = make_service_fn(move |_conn| {
         let p = proxy.clone();
         async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().process(req))) }
     });

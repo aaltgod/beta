@@ -11,3 +11,4 @@ secrets:
 proxy_settings:
   targets:
     - { team_host: 10.136.179.132, port: 1223 }
+    - { team_host: 127.0.0.1, port: 5001 }
