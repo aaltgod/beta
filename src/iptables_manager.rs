@@ -315,7 +315,7 @@ impl Manager {
             self.add_beta_chain()
                 .map_err(|e| anyhow::anyhow!("add_beta_chain {e}"))?
         }
-
+        
         for rule_info in rules_info.iter() {
             let rule = rule_info.to_rule();
 
