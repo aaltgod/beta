@@ -7,7 +7,6 @@ use std::io::Read;
 use std::marker::{Send, Sync};
 use std::sync::mpsc::SyncSender;
 use std::{
-    fs::File,
     sync::{
         mpsc::{sync_channel, Receiver},
         Arc, Mutex,
@@ -212,7 +211,7 @@ impl ProxySettingsConfig {
         Ok(c)
     }
 
-    fn channel(&self, sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
+    fn channel(&self, _sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
         let cloned_self = self.clone();
 
         thread::spawn(move || loop {
@@ -245,7 +244,7 @@ impl ProxySettingsConfig {
             if !removed_targets.is_empty() || !added_targets.is_empty() {
                 *current_targets = new_targets;
 
-                sender.send(Ok(Event::TargetsModify)).unwrap();
+                // sender.send(Ok(Event::TargetsModify)).unwrap();
             }
         });
 
@@ -264,6 +263,7 @@ impl ProxySettingsConfig {
 
     fn build(&self) -> Result<Vec<Target>, ConfigError> {
         let file_data = get_file_data("config.yaml")?;
+
         let config_from_reader: ProxySettingsFromReader = serde_yaml::from_str(file_data.as_str())
             .map_err(|e| ConfigError::Etc {
                 description: "couldn't read config values".to_string(),
