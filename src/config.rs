@@ -3,10 +3,10 @@ use lazy_static::lazy_static;
 
 use regex::Regex;
 use serde::Deserialize;
+use std::io::Read;
 use std::marker::{Send, Sync};
 use std::sync::mpsc::SyncSender;
 use std::{
-    fs::File,
     sync::{
         mpsc::{sync_channel, Receiver},
         Arc, Mutex,
@@ -81,20 +81,28 @@ impl PartialEq for Target {
     }
 }
 
-fn open_file(path: &str) -> Result<File, ConfigError> {
-    return match std::fs::File::open(path) {
-        Ok(res) => Ok(res),
-        Err(e) => Err(ConfigError::Etc {
-            description: format!("couldn't open file `{}`", path),
+fn get_file_data(path: &str) -> Result<String, ConfigError> {
+    let mut data = String::new();
+    {
+        let mut file = std::fs::File::open(path).map_err(|e| ConfigError::Etc {
+            description: "couldn't open file".to_string(),
             error: e.into(),
-        }),
+        })?;
+
+        file.read_to_string(&mut data)
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't read file".to_string(),
+                error: e.into(),
+            })?;
     };
+
+    Ok(data)
 }
 
 pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
-    let config_file = open_file("config.yaml")?;
+    let file_data = get_file_data("config.yaml")?;
     let config_from_reader: SecretsFromReader =
-        serde_yaml::from_reader(config_file).map_err(|e| ConfigError::Etc {
+        serde_yaml::from_str(file_data.as_str()).map_err(|e| ConfigError::Etc {
             description: "couldn't read config values".to_string(),
             error: e.into(),
         })?;
@@ -203,11 +211,11 @@ impl ProxySettingsConfig {
         Ok(c)
     }
 
-    fn channel(&self, sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
+    fn channel(&self, _sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
         let cloned_self = self.clone();
 
         thread::spawn(move || loop {
-            thread::sleep(std::time::Duration::from_secs(2));
+            thread::sleep(std::time::Duration::from_secs(5));
 
             let mut current_targets = cloned_self.targets.lock().unwrap();
             let new_targets = match cloned_self.build() {
@@ -236,7 +244,7 @@ impl ProxySettingsConfig {
             if !removed_targets.is_empty() || !added_targets.is_empty() {
                 *current_targets = new_targets;
 
-                sender.send(Ok(Event::TargetsModify)).unwrap();
+                // sender.send(Ok(Event::TargetsModify)).unwrap();
             }
         });
 
@@ -254,8 +262,9 @@ impl ProxySettingsConfig {
     }
 
     fn build(&self) -> Result<Vec<Target>, ConfigError> {
-        let config_file = open_file("config.yaml")?;
-        let config_from_reader: ProxySettingsFromReader = serde_yaml::from_reader(config_file)
+        let file_data = get_file_data("config.yaml")?;
+
+        let config_from_reader: ProxySettingsFromReader = serde_yaml::from_str(file_data.as_str())
             .map_err(|e| ConfigError::Etc {
                 description: "couldn't read config values".to_string(),
                 error: e.into(),
