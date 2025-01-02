@@ -1,5 +1,5 @@
 # beta
-Simple MITM proxy.
+Simple MITM proxy for AD usage.
 
 ## Description
 - Redirects traffic to the specified address according to the `config.yaml` configuration;
