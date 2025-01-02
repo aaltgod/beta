@@ -10,5 +10,5 @@ secrets:
 # real-time config
 proxy_settings:
   targets:
-    - { team_host: 10.136.179.132, port: 1223 }
-    - { team_host: 127.0.0.1, port: 5001 }
+    - { team_host: 10.136.179.132, port: 1224 }
+    - { team_host: 10.136.179.133, port: 5001 }
