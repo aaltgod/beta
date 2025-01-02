@@ -22,7 +22,7 @@ clean: compose-down
 
 .PHONY: compose-up
 compose-up:
-	docker compose -p beta -f ./docker-compose.yaml up -d
+	docker compose -p beta -f ./docker-compose.yaml up --build -d
 
 .PHONY: compose-stop
 compose-stop:

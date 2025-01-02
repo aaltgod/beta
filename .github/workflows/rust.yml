@@ -3,9 +3,10 @@ run-name: ${{ github.actor }} is running
 
 on:
   push:
-    branches: ["release", "feature"]
+    branches: ["release/*", "feature/*"]
+
   pull_request:
-    branches: ["release", "feature"]
+    branches: ["release/*", "feature/*"]
 
 env:
   CARGO_TERM_COLOR: always

@@ -1,4 +1,5 @@
 use std::num::ParseIntError;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -17,14 +18,13 @@ use crate::metrics::{
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
 
-#[derive(Clone)]
 pub struct Server {
-    config: ProxySettingsConfig,
-    cache: Cache,
+    config: Arc<ProxySettingsConfig>,
+    cache: Arc<Cache>,
 }
 
 impl Server {
-    pub fn new(config: ProxySettingsConfig, cache: Cache) -> Self {
+    pub fn new(config: Arc<ProxySettingsConfig>, cache: Arc<Cache>) -> Self {
         Server { config, cache }
     }
 
@@ -184,7 +184,7 @@ impl Server {
                                 error: e.into(),
                             })?;
 
-                        warn!("FLGA : {:?}", flag_from_cache);
+                        warn!("FLAG : {:?}", flag_from_cache);
 
                         if flag_from_cache.len() == 0 {
                             let new_flag = helpers::build_flag(false);
@@ -570,7 +570,7 @@ impl Server {
         }
     }
 
-    async fn process(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    async fn process(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         match self.handle_request(req).await {
             Ok(res) => {
                 HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
@@ -588,11 +588,22 @@ impl Server {
     }
 }
 
-pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) {
-    let proxy = Server::new(config, cache);
-    let make_service = make_service_fn(move |_conn| {
-        let p = proxy.clone();
-        async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().process(req))) }
+pub async fn run(proxy_addr: String, config: Arc<ProxySettingsConfig>, cache: Arc<Cache>) {
+    let proxy = Arc::new(Server::new(config, cache));
+
+    let make_service = make_service_fn({
+        let proxy = Arc::clone(&proxy);
+
+        move |_conn| {
+            let p = Arc::clone(&proxy);
+
+            async move {
+                Ok::<_, hyper::Error>(service_fn(move |req| {
+                    let p = Arc::clone(&p);
+                    async move { p.process(req).await }
+                }))
+            }
+        }
     });
 
     let addr = proxy_addr.parse().expect("couldn't parse proxy address");
