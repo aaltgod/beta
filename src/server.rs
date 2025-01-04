@@ -7,6 +7,7 @@ use http::uri::Scheme;
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
+use lazy_static::lazy_static;
 
 use crate::cache::Cache;
 use crate::config::ProxySettingsConfig;
@@ -17,6 +18,12 @@ use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
+
+lazy_static! {
+    pub static ref HEADER_VALUE_URL_ENCODED: HeaderValue =
+        HeaderValue::from_str("application/x-www-form-urlencoded")
+            .expect("invalid HEADER_VALUE_URL_ENCODED");
+}
 
 pub struct Server {
     config: Arc<ProxySettingsConfig>,
@@ -352,9 +359,9 @@ impl Server {
         let mut uri = req.uri().clone();
         let body = req.body_mut();
 
-        let encoded = headers.get("Content-Type").is_some_and(|h| {
-            h.eq(&HeaderValue::from_str("application/x-www-form-urlencoded").unwrap())
-        });
+        let encoded = headers
+            .get("Content-Type")
+            .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
 
         let changed_request_body =
             self.change_request_body(body, encoded)
@@ -368,7 +375,11 @@ impl Server {
         warn!("{:?}", changed_request_body);
 
         let host = match headers.get("host") {
-            Some(res) => res.to_str().unwrap(),
+            Some(res) => res.to_str().map_err(|e| ServerError::Changer {
+                method_name: "res.to_str".to_string(),
+                description: "couldn't convert header `host` to str".to_string(),
+                error: e.into(),
+            })?,
             None => {
                 return Err(ServerError::Changer {
                     method_name: "headers.get".to_string(),
@@ -404,7 +415,16 @@ impl Server {
 
             let mut host = String::default();
 
-            for target in self.config.targets().iter() {
+            for target in self
+                .config
+                .targets()
+                .map_err(|e| ServerError::Changer {
+                    method_name: "config.targets".to_string(),
+                    description: "couldn't get targets".to_string(),
+                    error: e.into(),
+                })?
+                .iter()
+            {
                 if port == target.port {
                     host = target.team_host.clone() + ":" + split[1];
 
@@ -444,7 +464,16 @@ impl Server {
 
         headers.insert(
             "host",
-            HeaderValue::from_str(changed_host.as_str()).unwrap(),
+            match HeaderValue::from_str(changed_host.as_str()) {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(ServerError::Changer {
+                        method_name: "HeaderValue::from_str".to_string(),
+                        description: "couldn't convert header value for header `host`".to_string(),
+                        error: e.into(),
+                    })
+                }
+            },
         );
 
         *req.body_mut() = changed_request_body;
@@ -469,8 +498,17 @@ impl Server {
 
         headers.insert(
             hyper::header::CONTENT_LENGTH,
-            // TODO: add error handling(probably)
-            HeaderValue::from_str(new_body_length.to_string().as_str()).unwrap(),
+            match HeaderValue::from_str(new_body_length.to_string().as_str()) {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(ServerError::Changer {
+                        method_name: "HeaderValue::from_str".to_string(),
+                        description: "couldn't convert header value for header `content-length`"
+                            .to_string(),
+                        error: e.into(),
+                    })
+                }
+            },
         );
 
         *resp.body_mut() = new_body;
