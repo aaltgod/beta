@@ -9,7 +9,6 @@ services:
     restart: always
     ports:
       - "${PROXY_PORT}:${PROXY_PORT}"
-    command: pwd
     depends_on:
       - redis
     volumes:

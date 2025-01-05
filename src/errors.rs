@@ -47,7 +47,7 @@ pub enum ConfigError {
     #[error(
         "
         `{key}` is not set, want(example):
-        
+
         {group}:
             {key}: {value_example}
     "
@@ -61,7 +61,7 @@ pub enum ConfigError {
     #[error(
         "
         an element in `{list_name}` is not set or set not correctly, want(example):
-        
+
         {list_name}:
             - {element_example}
     "

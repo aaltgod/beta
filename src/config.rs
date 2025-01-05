@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::anyhow;
 use lazy_static::lazy_static;
 
 use regex::Regex;
@@ -17,7 +17,8 @@ use std::{
 use crate::errors::ConfigError;
 
 lazy_static! {
-    pub static ref ENV_VAR_REGEX: Regex = Regex::new(r"\$\{([\w]*)\}").unwrap();
+    pub static ref ENV_VAR_REGEX: Regex =
+        Regex::new(r"\$\{([\w]*)\}").expect("invalid ENV_VAR_REGEX");
 }
 
 #[derive(Default, Deserialize, Debug, Clone)]
@@ -204,20 +205,38 @@ impl ProxySettingsConfig {
         c.channel(sender.clone()).map_err(|e| {
             return ConfigError::Etc {
                 description: "channel".to_string(),
-                error: e,
+                error: e.into(),
             };
         })?;
 
         Ok(c)
     }
 
-    fn channel(&self, _sender: SyncSender<Result<Event, notify::Error>>) -> Result<(), Error> {
+    fn channel(
+        &self,
+        _sender: SyncSender<Result<Event, notify::Error>>,
+    ) -> Result<(), ConfigError> {
         let cloned_self = self.clone();
 
         thread::spawn(move || loop {
             thread::sleep(std::time::Duration::from_secs(5));
 
-            let mut current_targets = cloned_self.targets.lock().unwrap();
+            let mut current_targets = match cloned_self.targets.lock() {
+                Ok(res) => res,
+                Err(e) => {
+                    error!(
+                        "{}",
+                        ConfigError::Etc {
+                            description: "couldn't get targets".to_string(),
+                            error: anyhow!("{}", e.to_string()),
+                        }
+                        .to_string()
+                    );
+
+                    continue;
+                }
+            };
+
             let new_targets = match cloned_self.build() {
                 Ok(res) => res,
                 Err(e) => {
@@ -244,21 +263,44 @@ impl ProxySettingsConfig {
             if !removed_targets.is_empty() || !added_targets.is_empty() {
                 *current_targets = new_targets;
 
-                // sender.send(Ok(Event::TargetsModify)).unwrap();
+                // sender.send(Ok(Event::TargetsModify)).map_err();
             }
         });
 
         Ok(())
     }
 
-    pub fn recv(&self) -> Result<Event, notify::Error> {
-        Arc::clone(&self.receiver).lock().unwrap().recv().unwrap()
+    pub fn recv(&self) -> Result<Event, ConfigError> {
+        let event = Arc::clone(&self.receiver)
+            .lock()
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't lock receiver".to_string(),
+                error: anyhow!("{}", e.to_string()),
+            })?
+            .recv()
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't receive an event".to_string(),
+                error: anyhow!("{}", e.to_string()),
+            })?
+            .map_err(|e| ConfigError::Etc {
+                description: "recv error".to_string(),
+                error: anyhow!("{}", e.to_string()),
+            })?;
+
+        Ok(event)
     }
 
-    pub fn targets(&self) -> Vec<Target> {
+    pub fn targets(&self) -> Result<Vec<Target>, ConfigError> {
         let cloned_targets = Arc::clone(&self.targets);
-        let targets = cloned_targets.lock().unwrap().to_vec();
-        targets
+        let targets = cloned_targets
+            .lock()
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't lock targets".to_string(),
+                error: anyhow!("{}", e.to_string()),
+            })?
+            .to_vec();
+
+        Ok(targets)
     }
 
     fn build(&self) -> Result<Vec<Target>, ConfigError> {
@@ -324,20 +366,16 @@ impl ProxySettingsConfig {
 fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {
     let mut result = str.to_string();
 
-    for v in ENV_VAR_REGEX.clone().captures_iter(str) {
-        let env_name = v.get(1).map_or("", |m| m.as_str());
-        let env_value = match dotenv::var(env_name) {
-            Ok(res) => res,
-            Err(_) => {
-                return Err(ConfigError::Env {
-                    env_name: env_name.to_string(),
-                })
-            }
-        };
+    for (c, [env_name]) in ENV_VAR_REGEX
+        .clone()
+        .captures_iter(str)
+        .map(|c| c.extract())
+    {
+        let env_value = dotenv::var(env_name).map_err(|_| ConfigError::Env {
+            env_name: env_name.to_string(),
+        })?;
 
-        let env_var_reg = v.get(0).map(|s| s.as_str()).unwrap();
-
-        result = result.replace(env_var_reg, env_value.as_str())
+        result = result.replace(c, env_value.as_str())
     }
 
     Ok(result)
