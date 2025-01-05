@@ -9,8 +9,6 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 use lazy_static::lazy_static;
 
-use crate::cache::Cache;
-use crate::config::ProxySettingsConfig;
 use crate::errors::ServerError;
 use crate::helpers;
 use crate::helpers::FLAG_REGEX;
@@ -18,6 +16,7 @@ use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
+use crate::traits::{Storage, TargetsProvider};
 
 lazy_static! {
     pub static ref HEADER_VALUE_URL_ENCODED: HeaderValue =
@@ -26,12 +25,15 @@ lazy_static! {
 }
 
 pub struct Server {
-    config: Arc<ProxySettingsConfig>,
-    cache: Arc<Cache>,
+    config: Arc<dyn TargetsProvider + Send + Sync>,
+    cache: Arc<dyn Storage + Send + Sync>,
 }
 
 impl Server {
-    pub fn new(config: Arc<ProxySettingsConfig>, cache: Arc<Cache>) -> Self {
+    pub fn new(
+        config: Arc<dyn TargetsProvider + Send + Sync>,
+        cache: Arc<dyn Storage + Send + Sync>,
+    ) -> Self {
         Server { config, cache }
     }
 
@@ -626,7 +628,11 @@ impl Server {
     }
 }
 
-pub async fn run(proxy_addr: String, config: Arc<ProxySettingsConfig>, cache: Arc<Cache>) {
+pub async fn run(
+    proxy_addr: String,
+    config: Arc<dyn TargetsProvider + Send + Sync>,
+    cache: Arc<dyn Storage + Send + Sync>,
+) {
     let proxy = Arc::new(Server::new(config, cache));
 
     let make_service = make_service_fn({

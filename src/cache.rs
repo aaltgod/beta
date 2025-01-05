@@ -1,8 +1,9 @@
+use async_trait::async_trait;
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 use redis::{AsyncCommands, RedisError};
 
-use crate::errors::CacheError;
+use crate::{errors::CacheError, traits::Storage};
 
 #[derive(Clone)]
 pub struct Cache {
@@ -22,8 +23,11 @@ impl Cache {
     > {
         self.pool.get().await
     }
+}
 
-    pub async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
+#[async_trait]
+impl Storage for Cache {
+    async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
@@ -39,7 +43,7 @@ impl Cache {
         Ok(())
     }
 
-    pub async fn get_flag(&self, key: String) -> Result<String, CacheError> {
+    async fn get_flag(&self, key: String) -> Result<String, CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),

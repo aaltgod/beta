@@ -6,6 +6,8 @@ pub mod helpers;
 pub mod metrics;
 pub mod metrics_server;
 pub mod server;
+mod server_tests;
+mod traits;
 
 use std::sync::Arc;
 
