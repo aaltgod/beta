@@ -1,4 +1,3 @@
-
 FROM rust:1-alpine3.19 as builder
 
 ENV RUSTFLAGS="-C target-feature=-crt-static"
