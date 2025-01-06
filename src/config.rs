@@ -15,6 +15,7 @@ use std::{
 };
 
 use crate::errors::ConfigError;
+use crate::traits::TargetsProvider;
 
 lazy_static! {
     pub static ref ENV_VAR_REGEX: Regex =
@@ -290,19 +291,6 @@ impl ProxySettingsConfig {
         Ok(event)
     }
 
-    pub fn targets(&self) -> Result<Vec<Target>, ConfigError> {
-        let cloned_targets = Arc::clone(&self.targets);
-        let targets = cloned_targets
-            .lock()
-            .map_err(|e| ConfigError::Etc {
-                description: "couldn't lock targets".to_string(),
-                error: anyhow!("{}", e.to_string()),
-            })?
-            .to_vec();
-
-        Ok(targets)
-    }
-
     fn build(&self) -> Result<Vec<Target>, ConfigError> {
         let file_data = get_file_data("config.yaml")?;
 
@@ -358,6 +346,21 @@ impl ProxySettingsConfig {
 
             result
         };
+
+        Ok(targets)
+    }
+}
+
+impl TargetsProvider for ProxySettingsConfig {
+    fn targets(&self) -> Result<Vec<Target>, ConfigError> {
+        let cloned_targets = Arc::clone(&self.targets);
+        let targets = cloned_targets
+            .lock()
+            .map_err(|e| ConfigError::Etc {
+                description: "couldn't lock targets".to_string(),
+                error: anyhow!("{}", e.to_string()),
+            })?
+            .to_vec();
 
         Ok(targets)
     }

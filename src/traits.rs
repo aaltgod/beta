@@ -1,0 +1,34 @@
+use anyhow::Error;
+use async_trait::async_trait;
+use http::{Request, Response};
+use hyper::Body;
+
+use crate::{
+    config::Target,
+    errors::{CacheError, ConfigError},
+};
+
+#[cfg(test)]
+use mockall::{automock, predicate::*};
+#[cfg_attr(test, automock)]
+#[async_trait]
+pub trait Storage {
+    async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError>;
+    async fn get_flag(&self, key: String) -> Result<String, CacheError>;
+}
+
+#[cfg_attr(test, automock)]
+pub trait TargetsProvider {
+    fn targets(&self) -> Result<Vec<Target>, ConfigError>;
+}
+
+#[cfg_attr(test, automock)]
+#[async_trait]
+pub trait Sender {
+    async fn send(&self, req: Request<Body>) -> Result<Response<Body>, Error>;
+}
+
+#[cfg_attr(test, automock)]
+pub trait FlagsProvider {
+    fn build_flag(&self) -> String;
+}
