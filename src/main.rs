@@ -1,11 +1,14 @@
 pub mod cache;
+mod client;
 pub mod config;
 pub mod errors;
 pub mod handlers;
-pub mod helpers;
+pub mod helper;
 pub mod metrics;
 pub mod metrics_server;
 pub mod server;
+mod server_tests;
+mod traits;
 
 use std::sync::Arc;
 
@@ -88,6 +91,8 @@ async fn main() -> () {
                         .max_open(20)
                         .build(RedisConnectionManager::new(redis_client)),
                 )),
+                Arc::new(client::Client::new()),
+                Arc::new(helper::Helper::new()),
             )
             .await
         }),
