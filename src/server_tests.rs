@@ -1,0 +1,416 @@
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use http::Request;
+    use mockall::predicate::eq;
+
+    use crate::{
+        config::Target,
+        server::{Server, HEADER_VALUE_URL_ENCODED},
+        traits::{MockFlagsProvider, MockSender, MockStorage, MockTargetsProvider},
+    };
+
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        static ref HOST: String = "10.10.2.10:1337".to_string();
+        static ref URI_FLAG: String = format!("http://{}/flag", *HOST);
+        static ref FLAG1: String = "WEQEQWEQWEQWEQWEQWEQWEQWEQWEQWQ=".to_string();
+        static ref FLAG2: String = "TURTURUTIRTURITURTURTRRTRETETET=".to_string();
+        static ref FLAG1_ENCODED: String = "WEQEQWEQWEQWEQWEQWEQWEQWEQWEQWQ%3D".to_string();
+        static ref FLAG2_ENCODED: String = "TURTURUTIRTURITURTURTRRTRETETET%3D".to_string();
+        static ref TARGETS: Vec<Target> = vec![Target {
+            port: 1337,
+            team_host: "10.10.3.10".to_string(),
+        }];
+    }
+
+    // Success
+
+    #[tokio::test]
+    async fn handle_request_success_checker_puts_flag_in_body() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mut mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG1.clone()))
+            .returning(|_| Ok("".to_string()));
+
+        mock_flags_provider
+            .expect_build_flag()
+            .returning(|| FLAG2.clone());
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(201)
+                .body(hyper::Body::from("OK"))
+                .unwrap())
+        });
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(URI_FLAG.clone())
+                    .header("host", HOST.clone())
+                    .body(hyper::Body::from(format!("flag={}", FLAG1.clone())))
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_puts_flag_in_body_encoded() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mut mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG1.clone()))
+            .returning(|_| Ok("".to_string()));
+
+        mock_flags_provider
+            .expect_build_flag()
+            .returning(|| FLAG2.clone());
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(201)
+                .body(hyper::Body::from("OK"))
+                .unwrap())
+        });
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(URI_FLAG.clone())
+                    .header("host", HOST.clone())
+                    .header("Content-Type", HEADER_VALUE_URL_ENCODED.clone())
+                    .body(hyper::Body::from(format!("flag={}", FLAG1_ENCODED.clone())))
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_puts_flag_in_uri() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mut mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG1.clone()))
+            .returning(|_| Ok("".to_string()));
+
+        mock_flags_provider
+            .expect_build_flag()
+            .returning(|| FLAG2.clone());
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(201)
+                .body(hyper::Body::from("OK"))
+                .unwrap())
+        });
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(format!("{}?flag={}", URI_FLAG.clone(), FLAG1.clone()))
+                    .header("host", HOST.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_puts_flag_in_uri_encoded() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mut mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG1.clone()))
+            .returning(|_| Ok("".to_string()));
+
+        mock_flags_provider
+            .expect_build_flag()
+            .returning(|| FLAG2.clone());
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_storage
+            .expect_set_flag()
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
+            .returning(|_, _| Ok(()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(201)
+                .body(hyper::Body::from("OK"))
+                .unwrap())
+        });
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(format!(
+                    "{}?flag={}",
+                    URI_FLAG.clone(),
+                    FLAG1_ENCODED.clone()
+                ))
+                .header("host", HOST.clone())
+                .body(hyper::Body::empty())
+                .unwrap(),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_gets_flag() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        let response_body = hyper::Body::from(format!("flag={}", FLAG2.clone()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(200)
+                .body(response_body)
+                .unwrap())
+        });
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(URI_FLAG.clone())
+                    .header("host", HOST.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        let result_body = hyper::body::to_bytes(result.unwrap().into_body())
+            .await
+            .unwrap();
+
+        assert_eq!(result_body, format!("flag={}", FLAG1.clone()));
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_gets_flags() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        let response_body = hyper::Body::from(format!("flag={}{}", FLAG2.clone(), FLAG2.clone()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .status(200)
+                .body(response_body)
+                .unwrap())
+        });
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(URI_FLAG.clone())
+                    .header("host", HOST.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        let result_body = hyper::body::to_bytes(result.unwrap().into_body())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result_body,
+            format!("flag={}{}", FLAG1.clone(), FLAG1.clone())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_gets_flag_encoded() {
+        let mut mock_targets_provider = MockTargetsProvider::default();
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mock_flags_provider = MockFlagsProvider::default();
+
+        mock_targets_provider
+            .expect_targets()
+            .returning(|| Ok(TARGETS.clone()));
+
+        let response_body = hyper::Body::from(format!("flag={}", FLAG2_ENCODED.clone()));
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .header("Content-Type", HEADER_VALUE_URL_ENCODED.clone())
+                .status(200)
+                .body(response_body)
+                .unwrap())
+        });
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        let config = Arc::new(mock_targets_provider);
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::get(URI_FLAG.clone())
+                    .header("host", HOST.clone())
+                    .header("Content-Type", HEADER_VALUE_URL_ENCODED.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        let result_body = hyper::body::to_bytes(result.unwrap().into_body())
+            .await
+            .unwrap();
+
+        assert_eq!(result_body, format!("flag={}", FLAG1_ENCODED.clone()));
+    }
+
+    // Fail
+    // TODO: add tests for failed cases
+}
