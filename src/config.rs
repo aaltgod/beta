@@ -1,13 +1,11 @@
-use anyhow::anyhow;
 use lazy_static::lazy_static;
 
 use regex::Regex;
 use serde::Deserialize;
-use std::f32::consts::E;
 use std::io::Read;
 use std::sync::RwLock;
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread,
 };
 

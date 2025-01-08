@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::sync::{Arc, RwLock};
 
     use http::Request;
     use mockall::predicate::eq;
@@ -51,7 +51,7 @@ mod tests {
             .expect_build_flag()
             .with(
                 eq(FLAG_ALPHABET.clone()),
-                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_LENGTH),
                 eq(FLAG_POSTFIX.clone()),
             )
             .returning(|_, _, _| FLAG2.clone());
@@ -112,7 +112,7 @@ mod tests {
             .expect_build_flag()
             .with(
                 eq(FLAG_ALPHABET.clone()),
-                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_LENGTH),
                 eq(FLAG_POSTFIX.clone()),
             )
             .returning(|_, _, _| FLAG2.clone());
@@ -174,7 +174,7 @@ mod tests {
             .expect_build_flag()
             .with(
                 eq(FLAG_ALPHABET.clone()),
-                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_LENGTH),
                 eq(FLAG_POSTFIX.clone()),
             )
             .returning(|_, _, _| FLAG2.clone());
@@ -235,7 +235,7 @@ mod tests {
             .expect_build_flag()
             .with(
                 eq(FLAG_ALPHABET.clone()),
-                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_LENGTH),
                 eq(FLAG_POSTFIX.clone()),
             )
             .returning(|_, _, _| FLAG2.clone());
