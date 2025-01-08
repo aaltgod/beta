@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 use std::str;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::anyhow;
 use http::uri::Scheme;
@@ -10,13 +10,13 @@ use hyper::{Body, Request, Response, Server as HTTPServer, Uri};
 use lazy_static::lazy_static;
 use url::form_urlencoded;
 
+use crate::config::ProxySettingsConfig;
 use crate::errors::ServerError;
-use crate::helper::FLAG_REGEX;
 use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
-use crate::traits::{FlagsProvider, Sender, Storage, TargetsProvider};
+use crate::traits::{FlagsProvider, Sender, Storage};
 
 lazy_static! {
     pub static ref HEADER_VALUE_URL_ENCODED: HeaderValue =
@@ -25,7 +25,8 @@ lazy_static! {
 }
 
 pub struct Server {
-    config: Arc<dyn TargetsProvider + Send + Sync>,
+    config: Arc<RwLock<ProxySettingsConfig>>,
+
     cache: Arc<dyn Storage + Send + Sync>,
     client: Arc<dyn Sender + Send + Sync>,
     flags_provider: Arc<dyn FlagsProvider + Send + Sync>,
@@ -33,7 +34,7 @@ pub struct Server {
 
 impl Server {
     pub fn new(
-        config: Arc<dyn TargetsProvider + Send + Sync>,
+        config: Arc<RwLock<ProxySettingsConfig>>,
         cache: Arc<dyn Storage + Send + Sync>,
         client: Arc<dyn Sender + Send + Sync>,
         flags_provider: Arc<dyn FlagsProvider + Send + Sync>,
@@ -95,7 +96,17 @@ impl Server {
 
         let mut changed_path = path.to_string();
 
-        for flag in FLAG_REGEX.clone().find_iter(path) {
+        let config = self
+            .config
+            .read()
+            .map_err(|e| ServerError::Changer {
+                method_name: "config.read".to_string(),
+                description: "couldn't read config".to_string(),
+                error: anyhow!("{e}"),
+            })?
+            .clone();
+
+        for flag in config.flag_regexp.find_iter(path) {
             let flag_from_cache = self
                 .cache
                 .get_flag(flag.as_str().to_string())
@@ -108,8 +119,12 @@ impl Server {
 
             info!("GOT FLAG IN PATH {:?}", flag);
 
-            if flag_from_cache.len() == 0 {
-                let new_flag = self.flags_provider.build_flag();
+            let pair_flag = if flag_from_cache.len() == 0 {
+                let new_flag = self.flags_provider.build_flag(
+                    &config.flag_alphabet,
+                    flag.len() - &config.flag_postfix.len(),
+                    &config.flag_postfix,
+                );
 
                 self.process_flag_pair(flag.as_str(), new_flag.as_str())
                     .await
@@ -119,13 +134,12 @@ impl Server {
                         error: e.into(),
                     })?;
 
-                changed_path = FLAG_REGEX.clone().replace(path, new_flag).to_string();
+                new_flag
             } else {
-                changed_path = FLAG_REGEX
-                    .clone()
-                    .replace(path, flag_from_cache)
-                    .to_string();
-            }
+                flag_from_cache
+            };
+
+            changed_path = config.flag_regexp.replace(path, pair_flag).to_string();
 
             info!("CHANGED PATH:  {:?}", changed_path);
         }
@@ -172,11 +186,21 @@ impl Server {
 
         let mut result_body = text_body.to_string();
 
+        let config = self
+            .config
+            .read()
+            .map_err(|e| ServerError::Changer {
+                method_name: "config.read".to_string(),
+                description: "couldn't read config".to_string(),
+                error: anyhow!("{e}"),
+            })?
+            .clone();
+
         if encoded {
             let pairs = url::form_urlencoded::parse(&body_bytes);
 
             for (_i, (_key, value)) in pairs.into_iter().enumerate() {
-                for flag in FLAG_REGEX.clone().find_iter(&value) {
+                for flag in config.flag_regexp.find_iter(&value) {
                     let flag_from_cache = self
                         .cache
                         .get_flag(flag.as_str().to_string())
@@ -190,7 +214,11 @@ impl Server {
                     warn!("REQ FLAG FROM CACHE : {:?}", flag_from_cache);
 
                     let pair_flag = if flag_from_cache.len() == 0 {
-                        let new_flag = self.flags_provider.build_flag();
+                        let new_flag = self.flags_provider.build_flag(
+                            &config.flag_alphabet,
+                            flag.len() - config.flag_postfix.len(),
+                            &config.flag_postfix,
+                        );
 
                         self.process_flag_pair(flag.as_str(), new_flag.as_str())
                             .await
@@ -215,7 +243,7 @@ impl Server {
                 }
             }
         } else {
-            for flag in FLAG_REGEX.clone().find_iter(text_body) {
+            for flag in config.flag_regexp.find_iter(text_body) {
                 let flag_from_cache = self
                     .cache
                     .get_flag(flag.as_str().to_string())
@@ -227,7 +255,11 @@ impl Server {
                     })?;
 
                 let pair_flag = if flag_from_cache.len() == 0 {
-                    let new_flag = self.flags_provider.build_flag();
+                    let new_flag = self.flags_provider.build_flag(
+                        &config.flag_alphabet,
+                        flag.len() - config.flag_postfix.len(),
+                        &config.flag_postfix,
+                    );
 
                     self.process_flag_pair(flag.as_str(), new_flag.as_str())
                         .await
@@ -278,11 +310,21 @@ impl Server {
 
         let mut result_body = text_body.to_string();
 
+        let config = self
+            .config
+            .read()
+            .map_err(|e| ServerError::Changer {
+                method_name: "config.read".to_string(),
+                description: "couldn't read config".to_string(),
+                error: anyhow!("{e}"),
+            })?
+            .clone();
+
         if encoded {
             let pairs = url::form_urlencoded::parse(&body_bytes);
 
             for (_i, (_key, value)) in pairs.into_iter().enumerate() {
-                for flag in FLAG_REGEX.clone().find_iter(&value) {
+                for flag in config.flag_regexp.find_iter(&value) {
                     let flag_from_cache = self
                         .cache
                         .get_flag(flag.as_str().to_string())
@@ -305,7 +347,7 @@ impl Server {
                 }
             }
         } else {
-            for flag in FLAG_REGEX.clone().find_iter(text_body) {
+            for flag in config.flag_regexp.find_iter(text_body) {
                 let flag_from_cache = self
                     .cache
                     .get_flag(flag.as_str().to_string())
@@ -353,6 +395,16 @@ impl Server {
 
         info!("HOST {}", host);
 
+        let config = self
+            .config
+            .read()
+            .map_err(|e| ServerError::Changer {
+                method_name: "config.read".to_string(),
+                description: "couldn't read config".to_string(),
+                error: anyhow!("{e}"),
+            })?
+            .clone();
+
         // try to parse host(ip) with port
         let (changed_host, scheme) = if host.contains(&":") {
             let split: Vec<&str> = host.split(":").collect();
@@ -377,16 +429,7 @@ impl Server {
 
             let mut host = String::default();
 
-            for target in self
-                .config
-                .targets()
-                .map_err(|e| ServerError::Changer {
-                    method_name: "config.targets".to_string(),
-                    description: "couldn't get targets".to_string(),
-                    error: e.into(),
-                })?
-                .iter()
-            {
+            for target in config.targets.iter() {
                 if port == target.port {
                     host = target.team_host.clone() + ":" + split[1];
 
@@ -426,7 +469,7 @@ impl Server {
         info!("CHANGED URI {:?}", uri);
 
         let encoded = headers
-            .get("Content-Type")
+            .get("content-Type")
             .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
 
         let changed_request_body =
@@ -598,7 +641,7 @@ impl Server {
 
 pub async fn run(
     proxy_addr: String,
-    config: Arc<dyn TargetsProvider + Send + Sync>,
+    config: Arc<RwLock<ProxySettingsConfig>>,
     cache: Arc<dyn Storage + Send + Sync>,
     client: Arc<dyn Sender + Send + Sync>,
     flags_provider: Arc<dyn FlagsProvider + Send + Sync>,

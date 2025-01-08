@@ -1,14 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, RwLock};
 
     use http::Request;
     use mockall::predicate::eq;
+    use regex::Regex;
 
     use crate::{
-        config::Target,
+        config::{ProxySettingsConfig, Target},
         server::{Server, HEADER_VALUE_URL_ENCODED},
-        traits::{MockFlagsProvider, MockSender, MockStorage, MockTargetsProvider},
+        traits::{MockFlagsProvider, MockSender, MockStorage},
     };
 
     use lazy_static::lazy_static;
@@ -16,6 +17,11 @@ mod tests {
     lazy_static! {
         static ref HOST: String = "10.10.2.10:1337".to_string();
         static ref URI_FLAG: String = format!("http://{}/flag", *HOST);
+        pub static ref FLAG_REGEXP: Regex =
+            Regex::new("[A-Za-z0-9]{31}=").expect("invalid FLAG_REGEXP");
+        static ref FLAG_ALPHABET: String =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_string();
+        static ref FLAG_POSTFIX: String = "=".to_string();
         static ref FLAG1: String = "WEQEQWEQWEQWEQWEQWEQWEQWEQWEQWQ=".to_string();
         static ref FLAG2: String = "TURTURUTIRTURITURTURTRRTRETETET=".to_string();
         static ref FLAG1_ENCODED: String = "WEQEQWEQWEQWEQWEQWEQWEQWEQWEQWQ%3D".to_string();
@@ -26,18 +32,15 @@ mod tests {
         }];
     }
 
+    const FLAG_LENGTH: usize = 32;
+
     // Success
 
     #[tokio::test]
     async fn handle_request_success_checker_puts_flag_in_body() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mut mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         mock_storage
             .expect_get_flag()
@@ -46,7 +49,12 @@ mod tests {
 
         mock_flags_provider
             .expect_build_flag()
-            .returning(|| FLAG2.clone());
+            .with(
+                eq(FLAG_ALPHABET.clone()),
+                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_POSTFIX.clone()),
+            )
+            .returning(|_, _, _| FLAG2.clone());
 
         mock_storage
             .expect_set_flag()
@@ -65,7 +73,12 @@ mod tests {
                 .unwrap())
         });
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -86,14 +99,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_puts_flag_in_body_encoded() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mut mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         mock_storage
             .expect_get_flag()
@@ -102,7 +110,12 @@ mod tests {
 
         mock_flags_provider
             .expect_build_flag()
-            .returning(|| FLAG2.clone());
+            .with(
+                eq(FLAG_ALPHABET.clone()),
+                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_POSTFIX.clone()),
+            )
+            .returning(|_, _, _| FLAG2.clone());
 
         mock_storage
             .expect_set_flag()
@@ -121,7 +134,12 @@ mod tests {
                 .unwrap())
         });
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -143,14 +161,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_puts_flag_in_uri() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mut mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         mock_storage
             .expect_get_flag()
@@ -159,7 +172,12 @@ mod tests {
 
         mock_flags_provider
             .expect_build_flag()
-            .returning(|| FLAG2.clone());
+            .with(
+                eq(FLAG_ALPHABET.clone()),
+                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_POSTFIX.clone()),
+            )
+            .returning(|_, _, _| FLAG2.clone());
 
         mock_storage
             .expect_set_flag()
@@ -178,7 +196,12 @@ mod tests {
                 .unwrap())
         });
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -199,14 +222,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_puts_flag_in_uri_encoded() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mut mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         mock_storage
             .expect_get_flag()
@@ -215,7 +233,12 @@ mod tests {
 
         mock_flags_provider
             .expect_build_flag()
-            .returning(|| FLAG2.clone());
+            .with(
+                eq(FLAG_ALPHABET.clone()),
+                eq(FLAG_LENGTH - FLAG_POSTFIX.len()),
+                eq(FLAG_POSTFIX.clone()),
+            )
+            .returning(|_, _, _| FLAG2.clone());
 
         mock_storage
             .expect_set_flag()
@@ -234,7 +257,12 @@ mod tests {
                 .unwrap())
         });
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -259,14 +287,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_gets_flag() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         let response_body = hyper::Body::from(format!("flag={}", FLAG2.clone()));
 
@@ -282,7 +305,12 @@ mod tests {
             .with(eq(FLAG2.clone()))
             .returning(|_| Ok(FLAG1.clone()));
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -307,14 +335,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_gets_flags() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         let response_body = hyper::Body::from(format!("flag={}{}", FLAG2.clone(), FLAG2.clone()));
 
@@ -335,7 +358,12 @@ mod tests {
             .with(eq(FLAG2.clone()))
             .returning(|_| Ok(FLAG1.clone()));
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);
@@ -363,14 +391,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_success_checker_gets_flag_encoded() {
-        let mut mock_targets_provider = MockTargetsProvider::default();
         let mut mock_storage = MockStorage::default();
         let mut mock_sender = MockSender::default();
         let mock_flags_provider = MockFlagsProvider::default();
-
-        mock_targets_provider
-            .expect_targets()
-            .returning(|| Ok(TARGETS.clone()));
 
         let response_body = hyper::Body::from(format!("flag={}", FLAG2_ENCODED.clone()));
 
@@ -387,7 +410,12 @@ mod tests {
             .with(eq(FLAG2.clone()))
             .returning(|_| Ok(FLAG1.clone()));
 
-        let config = Arc::new(mock_targets_provider);
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: TARGETS.clone(),
+        }));
         let cache = Arc::new(mock_storage);
         let client = Arc::new(mock_sender);
         let flags_provider = Arc::new(mock_flags_provider);

@@ -1,14 +1,6 @@
-use lazy_static::lazy_static;
-use rand::distributions::{Alphanumeric, DistString};
-use regex::Regex;
+use rand::Rng;
 
 use crate::traits::FlagsProvider;
-
-lazy_static! {
-    pub static ref FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}=").expect("invalid FLAG_REGEX");
-}
-
-const FLAG_LEN: usize = 31;
 
 pub struct Helper {}
 
@@ -19,11 +11,14 @@ impl Helper {
 }
 
 impl FlagsProvider for Helper {
-    fn build_flag(&self) -> String {
+    fn build_flag(&self, alphabet: &str, length: usize, postfix: &str) -> String {
         let mut rng = rand::thread_rng();
 
-        let flag: String = Alphanumeric.sample_string(&mut rng, FLAG_LEN);
+        let chars = alphabet.chars().collect::<Vec<char>>();
 
-        flag + "="
+        (0..length)
+            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .collect::<String>()
+            + postfix
     }
 }

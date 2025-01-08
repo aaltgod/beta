@@ -7,8 +7,12 @@ secrets:
 
   metrics_addr: ${HOST}:${METRICS_PORT}
 
-# real-time config
+# real-time settings
 proxy_settings:
+  flag_regexp: "[A-Za-z0-9]{31}="
+  # frequently used alphabet: ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+  flag_alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  flag_postfix: "="
   targets:
     - { team_host: 10.136.179.131, port: 1224 }
     - { team_host: 91.228.152.143, port: 5001 }
