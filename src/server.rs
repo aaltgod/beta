@@ -1,6 +1,6 @@
 use std::num::ParseIntError;
 use std::str;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use anyhow::anyhow;
 use http::uri::Scheme;
@@ -122,7 +122,7 @@ impl Server {
             let pair_flag = if flag_from_cache.len() == 0 {
                 let new_flag = self.flags_provider.build_flag(
                     &config.flag_alphabet,
-                    flag.len() - &config.flag_postfix.len(),
+                    flag.len(),
                     &config.flag_postfix,
                 );
 
@@ -216,7 +216,7 @@ impl Server {
                     let pair_flag = if flag_from_cache.len() == 0 {
                         let new_flag = self.flags_provider.build_flag(
                             &config.flag_alphabet,
-                            flag.len() - config.flag_postfix.len(),
+                            flag.len(),
                             &config.flag_postfix,
                         );
 
@@ -257,7 +257,7 @@ impl Server {
                 let pair_flag = if flag_from_cache.len() == 0 {
                     let new_flag = self.flags_provider.build_flag(
                         &config.flag_alphabet,
-                        flag.len() - config.flag_postfix.len(),
+                        flag.len(),
                         &config.flag_postfix,
                     );
 
@@ -541,7 +541,7 @@ impl Server {
 
         let mut req = req;
 
-        // TODO: if change_request returns, need to skip (original) request above maybe
+        // TODO: if change_request returns error, need to skip (original) request above maybe.
         let changed_req = match self.change_request(&mut req).await {
             Ok(_) => {
                 CHANGED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();

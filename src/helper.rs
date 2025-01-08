@@ -15,9 +15,8 @@ impl FlagsProvider for Helper {
         let mut rng = rand::thread_rng();
 
         let chars = alphabet.chars().collect::<Vec<char>>();
-
         (0..length)
-            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .map(|_| chars[rng.gen_range(0..chars.len() - postfix.len())])
             .collect::<String>()
             + postfix
     }
