@@ -85,7 +85,7 @@ async fn main() -> () {
         tokio::spawn(async move {
             server::run(
                 secrets_config.proxy_addr,
-                Arc::new(proxy_settings_config),
+                proxy_settings_config,
                 Arc::new(cache::Cache::new(
                     Pool::builder()
                         .max_open(20)
