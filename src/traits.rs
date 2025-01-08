@@ -3,10 +3,7 @@ use async_trait::async_trait;
 use http::{Request, Response};
 use hyper::Body;
 
-use crate::{
-    config::Target,
-    errors::{CacheError, ConfigError},
-};
+use crate::errors::CacheError;
 
 #[cfg(test)]
 use mockall::{automock, predicate::*};
@@ -18,11 +15,6 @@ pub trait Storage {
 }
 
 #[cfg_attr(test, automock)]
-pub trait TargetsProvider {
-    fn targets(&self) -> Result<Vec<Target>, ConfigError>;
-}
-
-#[cfg_attr(test, automock)]
 #[async_trait]
 pub trait Sender {
     async fn send(&self, req: Request<Body>) -> Result<Response<Body>, Error>;
@@ -30,5 +22,5 @@ pub trait Sender {
 
 #[cfg_attr(test, automock)]
 pub trait FlagsProvider {
-    fn build_flag(&self) -> String;
+    fn build_flag(&self, alphabet: &str, length: usize, postfix: &str) -> String;
 }
