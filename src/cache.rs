@@ -26,7 +26,7 @@ impl Cache {
 
 #[async_trait]
 impl Storage for Cache {
-    async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
+    async fn set_flag(&self, key: &str, value: &str) -> Result<(), CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
@@ -42,7 +42,7 @@ impl Storage for Cache {
         Ok(())
     }
 
-    async fn get_flag(&self, key: String) -> Result<String, CacheError> {
+    async fn get_flag(&self, key: &str) -> Result<String, CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
