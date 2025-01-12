@@ -37,6 +37,7 @@ struct ProxySettingsFromReader {
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct ProxySettings {
+    flag_ttl: Option<usize>,
     flag_regexp: Option<String>,
     flag_alphabet: Option<String>,
     flag_postfix: Option<String>,
@@ -174,6 +175,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
 #[derive(Debug)]
 /// Config for proxy settings in real-time.
 pub struct ProxySettingsConfig {
+    pub flag_ttl: usize,
     pub flag_regexp: Regex,
     pub flag_alphabet: String,
     pub flag_postfix: String,
@@ -183,6 +185,7 @@ pub struct ProxySettingsConfig {
 impl Clone for ProxySettingsConfig {
     fn clone(&self) -> Self {
         ProxySettingsConfig {
+            flag_ttl: self.flag_ttl,
             flag_regexp: self.flag_regexp.clone(),
             flag_alphabet: self.flag_alphabet.clone(),
             flag_postfix: self.flag_postfix.clone(),
@@ -193,10 +196,11 @@ impl Clone for ProxySettingsConfig {
 
 impl ProxySettingsConfig {
     pub fn new() -> Result<Arc<RwLock<Self>>, ConfigError> {
-        let (flag_regexp, flag_alphabet, flag_postfix, targets) =
+        let (flag_ttl, flag_regexp, flag_alphabet, flag_postfix, targets) =
             build_proxy_settings_config_data()?;
 
         let c = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl,
             flag_regexp,
             flag_alphabet,
             flag_postfix,
@@ -214,7 +218,7 @@ impl ProxySettingsConfig {
 
             let mut config = config.write().unwrap();
 
-            let (new_flag_regexp, new_flag_alphabet, new_flag_postfix, new_targets) =
+            let (new_flag_ttl, new_flag_regexp, new_flag_alphabet, new_flag_postfix, new_targets) =
                 match build_proxy_settings_config_data() {
                     Ok(res) => res,
                     Err(e) => {
@@ -228,6 +232,7 @@ impl ProxySettingsConfig {
                     }
                 };
             
+            config.flag_ttl = new_flag_ttl;
             config.flag_regexp = new_flag_regexp;
             config.flag_alphabet = new_flag_alphabet;
             config.flag_postfix = new_flag_postfix;
@@ -237,7 +242,7 @@ impl ProxySettingsConfig {
     }
 }
 
-fn build_proxy_settings_config_data() -> Result<(Regex, String, String, Vec<Target>), ConfigError> {
+fn build_proxy_settings_config_data() -> Result<(usize, Regex, String, String, Vec<Target>), ConfigError> {
     let file_data = get_file_data("config.yaml")?;
     let config_from_reader: ProxySettingsFromReader = serde_yaml::from_str(file_data.as_str())
         .map_err(|e| ConfigError::Etc {
@@ -270,6 +275,14 @@ fn build_proxy_settings_config_data() -> Result<(Regex, String, String, Vec<Targ
             })
         })
         .collect::<Result<Vec<_>, ConfigError>>()?;
+    
+    let flag_ttl = proxy_settings
+        .flag_ttl
+        .ok_or_else(|| ConfigError::NoGroupKey {
+            group: "proxy_settings".to_string(),
+            key: "flag_ttl".to_string(),
+            value_example: "flag_ttl: 60".to_string(),
+        })?;
 
     let flag_regexp =
         Regex::new(
@@ -304,7 +317,7 @@ fn build_proxy_settings_config_data() -> Result<(Regex, String, String, Vec<Targ
             value_example: "flag_postfix: \"=\"".to_string(),
         })?;
 
-    Ok((flag_regexp, flag_alphabet, flag_postfix, targets))
+    Ok((flag_ttl, flag_regexp, flag_alphabet, flag_postfix, targets))
 }
 
 fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {

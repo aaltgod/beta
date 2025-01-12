@@ -17,7 +17,7 @@ mod tests {
     lazy_static! {
         static ref HOST: String = "10.10.2.10:1337".to_string();
         static ref URI_FLAG: String = format!("http://{}/flag", *HOST);
-        pub static ref FLAG_REGEXP: Regex =
+        static ref FLAG_REGEXP: Regex =
             Regex::new("[A-Za-z0-9]{31}=").expect("invalid FLAG_REGEXP");
         static ref FLAG_ALPHABET: String =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_string();
@@ -33,6 +33,7 @@ mod tests {
     }
 
     const FLAG_LENGTH: usize = 32;
+    const FLAG_TTL: usize = 60;
 
     // Success
 
@@ -58,13 +59,13 @@ mod tests {
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_sender.expect_send().return_once(|_| {
             Ok(http::Response::builder()
@@ -74,6 +75,7 @@ mod tests {
         });
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -119,13 +121,13 @@ mod tests {
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_sender.expect_send().return_once(|_| {
             Ok(http::Response::builder()
@@ -135,6 +137,7 @@ mod tests {
         });
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -181,13 +184,13 @@ mod tests {
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_sender.expect_send().return_once(|_| {
             Ok(http::Response::builder()
@@ -197,6 +200,7 @@ mod tests {
         });
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -242,13 +246,13 @@ mod tests {
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG1.clone()), eq(FLAG2.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG1.clone()), eq(FLAG2.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_storage
             .expect_set_flag()
-            .with(eq(FLAG2.clone()), eq(FLAG1.clone()))
-            .returning(|_, _| Ok(()));
+            .with(eq(FLAG2.clone()), eq(FLAG1.clone()), eq(FLAG_TTL))
+            .returning(|_, _, _| Ok(()));
 
         mock_sender.expect_send().return_once(|_| {
             Ok(http::Response::builder()
@@ -258,6 +262,7 @@ mod tests {
         });
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -306,6 +311,7 @@ mod tests {
             .returning(|_| Ok(FLAG1.clone()));
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -359,6 +365,7 @@ mod tests {
             .returning(|_| Ok(FLAG1.clone()));
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
@@ -411,6 +418,7 @@ mod tests {
             .returning(|_| Ok(FLAG1.clone()));
 
         let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
             flag_regexp: FLAG_REGEXP.clone(),
             flag_alphabet: FLAG_ALPHABET.clone(),
             flag_postfix: FLAG_POSTFIX.clone(),
