@@ -18,6 +18,6 @@ RUN apk add --no-cache libgcc
 
 COPY --from=builder /beta/target/release/beta .
 
-ENV RUST_LOG=info
+ENV RUST_LOG=debug
 
 ENTRYPOINT ["/beta"]
