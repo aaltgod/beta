@@ -49,7 +49,7 @@ impl Server {
 
     async fn process_flag_pair(&self, flag: &str, new_flag: &str) -> Result<(), ServerError> {
         self.cache
-            .set_flag(flag.to_string(), new_flag.to_string())
+            .set_flag(flag, new_flag)
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
@@ -57,18 +57,14 @@ impl Server {
                 error: e.into(),
             })?;
 
-        info!("ok flag - new_flag");
-
         self.cache
-            .set_flag(new_flag.to_string(), flag.to_string())
+            .set_flag(new_flag, flag)
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
                 description: "couldn't set `new_flag: flag` in cache".to_string(),
                 error: e.into(),
             })?;
-
-        info!("ok new_flag - flag");
 
         Ok(())
     }
@@ -79,8 +75,6 @@ impl Server {
         host: &str,
         scheme: Scheme,
     ) -> Result<(), ServerError> {
-        info!("HOST {}", host);
-
         let changed_uri_builder = Uri::builder().scheme(scheme).authority(host);
 
         let path = match uri.path_and_query() {
@@ -107,17 +101,15 @@ impl Server {
             .clone();
 
         for flag in config.flag_regexp.find_iter(path) {
-            let flag_from_cache = self
-                .cache
-                .get_flag(flag.as_str().to_string())
-                .await
-                .map_err(|e| ServerError::Changer {
-                    method_name: "cache.get_flag".to_string(),
-                    description: "couldn't get flag from cache".to_string(),
-                    error: e.into(),
-                })?;
-
-            info!("GOT FLAG IN PATH {:?}", flag);
+            let flag_from_cache =
+                self.cache
+                    .get_flag(flag.as_str())
+                    .await
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "cache.get_flag".to_string(),
+                        description: "couldn't get flag from cache".to_string(),
+                        error: e.into(),
+                    })?;
 
             let pair_flag = if flag_from_cache.len() == 0 {
                 let new_flag = self.flags_provider.build_flag(
@@ -140,8 +132,6 @@ impl Server {
             };
 
             changed_path = config.flag_regexp.replace(path, pair_flag).to_string();
-
-            info!("CHANGED PATH:  {:?}", changed_path);
         }
 
         *uri = changed_uri_builder
@@ -161,8 +151,6 @@ impl Server {
         body: &mut Body,
         encoded: bool,
     ) -> Result<Body, ServerError> {
-        warn!("{encoded} {:?}", body);
-
         // No check for body length, because it's not necessary for CTF events. kekw
         let body_bytes = hyper::body::to_bytes(body)
             .await
@@ -182,8 +170,6 @@ impl Server {
             error: e.into(),
         })?;
 
-        warn!("TEXT_BODY: {:?}", text_body);
-
         let mut result_body = text_body.to_string();
 
         let config = self
@@ -201,17 +187,14 @@ impl Server {
 
             for (_i, (_key, value)) in pairs.into_iter().enumerate() {
                 for flag in config.flag_regexp.find_iter(&value) {
-                    let flag_from_cache = self
-                        .cache
-                        .get_flag(flag.as_str().to_string())
-                        .await
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "cache.get_flag".to_string(),
-                            description: "couldn't get flag from cache".to_string(),
-                            error: e.into(),
+                    let flag_from_cache =
+                        self.cache.get_flag(flag.as_str()).await.map_err(|e| {
+                            ServerError::Changer {
+                                method_name: "cache.get_flag".to_string(),
+                                description: "couldn't get flag from cache".to_string(),
+                                error: e.into(),
+                            }
                         })?;
-
-                    warn!("REQ FLAG FROM CACHE : {:?}", flag_from_cache);
 
                     let pair_flag = if flag_from_cache.len() == 0 {
                         let new_flag = self.flags_provider.build_flag(
@@ -244,15 +227,15 @@ impl Server {
             }
         } else {
             for flag in config.flag_regexp.find_iter(text_body) {
-                let flag_from_cache = self
-                    .cache
-                    .get_flag(flag.as_str().to_string())
-                    .await
-                    .map_err(|e| ServerError::Changer {
-                        method_name: "cache.get_flag".to_string(),
-                        description: "couldn't get flag from cache".to_string(),
-                        error: e.into(),
-                    })?;
+                let flag_from_cache =
+                    self.cache
+                        .get_flag(flag.as_str())
+                        .await
+                        .map_err(|e| ServerError::Changer {
+                            method_name: "cache.get_flag".to_string(),
+                            description: "couldn't get flag from cache".to_string(),
+                            error: e.into(),
+                        })?;
 
                 let pair_flag = if flag_from_cache.len() == 0 {
                     let new_flag = self.flags_provider.build_flag(
@@ -279,8 +262,6 @@ impl Server {
                     .to_string();
             }
         }
-
-        warn!("REQ RESULT_BODY {:?}", result_body);
 
         Ok(Body::from(result_body))
     }
@@ -325,17 +306,14 @@ impl Server {
 
             for (_i, (_key, value)) in pairs.into_iter().enumerate() {
                 for flag in config.flag_regexp.find_iter(&value) {
-                    let flag_from_cache = self
-                        .cache
-                        .get_flag(flag.as_str().to_string())
-                        .await
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "cache.get_flag".to_string(),
-                            description: "couldn't get flag from cache".to_string(),
-                            error: e.into(),
+                    let flag_from_cache =
+                        self.cache.get_flag(flag.as_str()).await.map_err(|e| {
+                            ServerError::Changer {
+                                method_name: "cache.get_flag".to_string(),
+                                description: "couldn't get flag from cache".to_string(),
+                                error: e.into(),
+                            }
                         })?;
-
-                    warn!("RESP FLAG FROM CACHE : {:?}", flag_from_cache);
 
                     let encoded_flag_from: String =
                         form_urlencoded::byte_serialize(flag.as_str().as_bytes()).collect();
@@ -348,15 +326,15 @@ impl Server {
             }
         } else {
             for flag in config.flag_regexp.find_iter(text_body) {
-                let flag_from_cache = self
-                    .cache
-                    .get_flag(flag.as_str().to_string())
-                    .await
-                    .map_err(|e| ServerError::Changer {
-                        method_name: "cache.get_flag".to_string(),
-                        description: "couldn't get flag from cache".to_string(),
-                        error: e.into(),
-                    })?;
+                let flag_from_cache =
+                    self.cache
+                        .get_flag(flag.as_str())
+                        .await
+                        .map_err(|e| ServerError::Changer {
+                            method_name: "cache.get_flag".to_string(),
+                            description: "couldn't get flag from cache".to_string(),
+                            error: e.into(),
+                        })?;
 
                 if flag_from_cache.len() != 0 {
                     result_body = result_body.replace(flag.as_str(), flag_from_cache.as_str())
@@ -366,17 +344,15 @@ impl Server {
             }
         }
 
-        warn!("RESULT_BODY {:?}", result_body);
-
         Ok(Body::from(result_body))
     }
 
     async fn change_request(&self, req: &mut Request<Body>) -> Result<(), ServerError> {
-        info!("REQ {:?}", req);
-
         let mut headers = req.headers().clone();
         let mut uri = req.uri().clone();
         let body = req.body_mut();
+
+        debug!("change_request: headers {:?}; URI {uri}", &headers);
 
         let host = match headers.get("host") {
             Some(res) => res.to_str().map_err(|e| ServerError::Changer {
@@ -392,8 +368,6 @@ impl Server {
                 });
             }
         };
-
-        info!("HOST {}", host);
 
         let config = self
             .config
@@ -466,8 +440,6 @@ impl Server {
                 error: e.into(),
             })?;
 
-        info!("CHANGED URI {:?}", uri);
-
         let encoded = headers
             .get("content-Type")
             .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
@@ -480,8 +452,6 @@ impl Server {
                     description: "couldn't change request body".to_string(),
                     error: e.into(),
                 })?;
-
-        warn!("{:?}", changed_request_body);
 
         headers.insert(
             "host",
@@ -501,17 +471,11 @@ impl Server {
         *req.uri_mut() = uri;
         *req.headers_mut() = headers;
 
-        info!("CHANGED REQ {:?}", req);
-
         return Ok(());
     }
 
     async fn change_response(&self, resp: &mut Response<Body>) -> Result<(), ServerError> {
-        info!("RESP {:?}", resp);
-
         let headers = resp.headers().clone();
-
-        warn!("{:?}", headers);
 
         let encoded = headers
             .get("Content-Type")
@@ -529,15 +493,11 @@ impl Server {
         *resp.body_mut() = changed_response_body;
         *resp.headers_mut() = headers;
 
-        info!("CHANGED RESP {:?}", &resp);
-
         Ok(())
     }
 
     pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, ServerError> {
         INCOMING_REQUEST_COUNTER.inc();
-
-        info!("handle_request URI {:?}", req.uri());
 
         let mut req = req;
 
@@ -579,8 +539,6 @@ impl Server {
             }
         };
 
-        info!("TARGET HOST {}", host);
-
         let mut target_service_resp = match self.client.send(changed_req).await {
             Ok(res) => {
                 TARGET_SERVICE_STATUS_COUNTER
@@ -596,10 +554,7 @@ impl Server {
 
                 return Err(ServerError::Changer {
                     method_name: "request".to_string(),
-                    description: format!(
-                        "target service with host `{}` returned error `{:?}`",
-                        host, e
-                    ),
+                    description: format!("target service with host `{host}` returned error `{e}`"),
                     error: e.into(),
                 });
             }
@@ -612,7 +567,7 @@ impl Server {
                 Ok(target_service_resp)
             }
             Err(e) => {
-                error!("couldn't change response {}", e);
+                error!("couldn't change response {e}");
 
                 CHANGED_RESPONSE_COUNTER.with_label_values(&["ERROR"]).inc();
 
@@ -626,10 +581,12 @@ impl Server {
             Ok(res) => {
                 HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
 
+                debug!("request handled successfully");
+
                 Ok(res)
             }
             Err(e) => {
-                error!("couldn't handle request: {}", e);
+                error!("couldn't handle request: {e}");
 
                 HANDLED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
 
@@ -666,7 +623,7 @@ pub async fn run(
     let addr = proxy_addr.parse().expect("couldn't parse proxy address");
     let server = HTTPServer::bind(&addr).serve(make_service);
 
-    warn!("start proxy on address: {addr}");
+    warn!("start `beta` on address: {addr}");
 
     if let Err(e) = server.await {
         error!("Fatal proxy error: {e}");
