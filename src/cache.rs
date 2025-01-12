@@ -26,16 +26,16 @@ impl Cache {
 
 #[async_trait]
 impl Storage for Cache {
-    async fn set_flag(&self, key: &str, value: &str) -> Result<(), CacheError> {
+    async fn set_flag(&self, key: &str, value: &str, ttl: usize) -> Result<(), CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
         })?;
 
-        conn.set_nx(key, value)
+        conn.set_ex(key, value, ttl)
             .await
             .map_err(|e| CacheError::Cache {
-                method_name: "set_nx".to_string(),
+                method_name: "set_ex".to_string(),
                 error: e.into(),
             })?;
 
