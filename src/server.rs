@@ -47,9 +47,14 @@ impl Server {
         }
     }
 
-    async fn process_flag_pair(&self, flag: &str, new_flag: &str) -> Result<(), ServerError> {
+    async fn process_flag_pair(
+        &self,
+        flag: &str,
+        new_flag: &str,
+        ttl: usize,
+    ) -> Result<(), ServerError> {
         self.cache
-            .set_flag(flag, new_flag)
+            .set_flag(flag, new_flag, ttl)
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
@@ -58,7 +63,7 @@ impl Server {
             })?;
 
         self.cache
-            .set_flag(new_flag, flag)
+            .set_flag(new_flag, flag, ttl)
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
@@ -118,7 +123,7 @@ impl Server {
                     &config.flag_postfix,
                 );
 
-                self.process_flag_pair(flag.as_str(), new_flag.as_str())
+                self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
                     .await
                     .map_err(|e| ServerError::Changer {
                         method_name: "process_flag_pair".to_string(),
@@ -203,7 +208,7 @@ impl Server {
                             &config.flag_postfix,
                         );
 
-                        self.process_flag_pair(flag.as_str(), new_flag.as_str())
+                        self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
                             .await
                             .map_err(|e| ServerError::Changer {
                                 method_name: "process_flag_pair".to_string(),
@@ -244,7 +249,7 @@ impl Server {
                         &config.flag_postfix,
                     );
 
-                    self.process_flag_pair(flag.as_str(), new_flag.as_str())
+                    self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
                         .await
                         .map_err(|e| ServerError::Changer {
                             method_name: "process_flag_pair".to_string(),
