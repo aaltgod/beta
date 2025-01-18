@@ -1,0 +1,19 @@
+secrets:
+  redis_addr: ${REDIS_HOST}:${REDIS_PORT}
+  redis_password: ${REDIS_PASSWORD}
+
+  proxy_port: ${PROXY_PORT}
+  proxy_addr: ${HOST}:${PROXY_PORT}
+
+  metrics_addr: ${HOST}:${METRICS_PORT}
+
+# real-time settings
+proxy_settings:
+  # in seconds
+  flag_ttl: 600 # 10 minutes
+  flag_regexp: "[A-Za-z0-9]{31}="
+  # frequently used alphabet: ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+  flag_alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  flag_postfix: "="
+  targets:
+    - { team_host: test-service, port: 5000 }
