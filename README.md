@@ -2,6 +2,8 @@
 
 Simple MITM proxy for AD usage.
 
+## English | [Русский](https://github.com/aaltgod/beta/blob/master/README_RU.md)
+
 ## Description
 
 - Redirects traffic to the specified address according to the `config.yaml` configuration;
