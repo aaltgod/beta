@@ -16,5 +16,4 @@ proxy_settings:
   flag_alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
   flag_postfix: "="
   targets:
-    - { team_host: 10.136.179.132, port: 1224 }
-    - { team_host: 10.136.179.133, port: 5001 }
+    - { team_host: test-service, port: 5000 }
