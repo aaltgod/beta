@@ -1,5 +1,5 @@
 [package]
-name = "beta"
+name = "lastochka"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,7 +13,7 @@ regex = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9.14"
 rand = "0.8.5"
-redis = { version = "0.23.0", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.22.3", features = ["tokio-comp", "connection-manager"] }
 warp = "0.3.5"
 prometheus = { version = "0.9", features = ["process"] }
 lazy_static = "1.4"
@@ -25,8 +25,7 @@ env_logger = "0.10.0"
 thiserror = "1.0"
 anyhow = "1.0"
 dotenv = "0.15.0"
+iptables = "0.5.0"
+notify = "6.1.0"
 http = "0.2.9"
 url = "2.4.1"
-async-trait = "0.1.84"
-mockall = "0.13.1"
-flate2 = "1.0.35"
