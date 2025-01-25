@@ -11,7 +11,6 @@ use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server as HTTPServer, Uri};
 use lazy_static::lazy_static;
-use redis::FromRedisValue;
 use url::form_urlencoded;
 
 use crate::config::ProxySettingsConfig;
@@ -26,8 +25,6 @@ lazy_static! {
     pub static ref HEADER_VALUE_URL_ENCODED: HeaderValue =
         HeaderValue::from_str("application/x-www-form-urlencoded")
             .expect("invalid HEADER_VALUE_URL_ENCODED");
-    pub static ref HEADER_VALUE_GZIP: HeaderValue =
-        HeaderValue::from_str("gzip").expect("invalid HEADER_VALUE_GZIP");
 }
 
 pub struct Server {
@@ -293,7 +290,19 @@ impl Server {
 
                         d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
                             method_name: "read_to_string".to_string(),
-                            description: "couldn't read body to string".to_string(),
+                            description: "couldn't read `gzip` body to string".to_string(),
+                            error: e.into(),
+                        })?;
+
+                        s
+                    }
+                    _ if res.contains("deflate") => {
+                        let mut d = flate2::read::DeflateDecoder::new(body_bytes.as_ref());
+                        let mut s = String::new();
+
+                        d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
+                            method_name: "read_to_string".to_string(),
+                            description: "couldn't read `deflate` body to string".to_string(),
                             error: e.into(),
                         })?;
 
@@ -352,6 +361,25 @@ impl Server {
                         e.finish().map_err(|e| ServerError::Changer {
                             method_name: "finish".to_string(),
                             description: "couldn't finish gzip encoder".to_string(),
+                            error: e.into(),
+                        })?
+                    }
+                    _ if res.contains("deflate") => {
+                        let mut e = flate2::write::DeflateEncoder::new(
+                            Vec::new(),
+                            flate2::Compression::best(),
+                        );
+
+                        e.write_all(body.as_bytes())
+                            .map_err(|e| ServerError::Changer {
+                                method_name: "write_all".to_string(),
+                                description: "couldn't write body to deflate encoder".to_string(),
+                                error: e.into(),
+                            })?;
+
+                        e.finish().map_err(|e| ServerError::Changer {
+                            method_name: "finish".to_string(),
+                            description: "couldn't finish deflate encoder".to_string(),
                             error: e.into(),
                         })?
                     }

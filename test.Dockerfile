@@ -13,7 +13,7 @@ COPY ./config.yaml /beta/config.yaml
 COPY ./.env /beta/.env
 
 RUN cargo build --release
-RUN strip target/release/beta
+RUN strip target/release/beta   
 
 FROM alpine:3.19
 

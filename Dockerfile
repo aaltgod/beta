@@ -13,7 +13,6 @@ RUN strip target/release/beta
 
 FROM alpine:3.19
 
-RUN pwd
 RUN apk add --no-cache libgcc
 
 COPY --from=builder /beta/target/release/beta .
