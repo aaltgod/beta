@@ -12,13 +12,14 @@ COPY ./Cargo.lock /beta/Cargo.lock
 COPY ./config.yaml /beta/config.yaml
 COPY ./.env /beta/.env
 
-RUN cargo build
+RUN cargo build --release
+RUN strip target/release/beta
 
 FROM alpine:3.19
 
 RUN apk add --no-cache libgcc iptables
 
-COPY --from=builder /beta/target/debug/beta .
+COPY --from=builder /beta/target/release/beta .
 
 ENV RUST_LOG=debug
 

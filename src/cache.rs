@@ -51,7 +51,7 @@ impl Storage for Cache {
         let flag = match conn.get(key).await {
             Ok(flag) => flag,
             Err(e) => match e.kind() {
-                redis::ErrorKind::TypeError => "".to_string(),
+                redis::ErrorKind::TypeError => String::from(""),
                 _ => {
                     return Err(CacheError::Cache {
                         method_name: "conn.get".to_string(),
