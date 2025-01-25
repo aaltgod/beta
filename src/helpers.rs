@@ -3,8 +3,9 @@ use rand::distributions::{Alphanumeric, DistString};
 use regex::Regex;
 
 lazy_static! {
-    pub static ref FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}=").unwrap();
-    pub static ref ENCODED_FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}%3D").unwrap();
+    pub static ref FLAG_REGEX: Regex = Regex::new("[A-Za-z0-9]{31}=").expect("invalid FLAG_REGEX");
+    pub static ref ENCODED_FLAG_REGEX: Regex =
+        Regex::new("[A-Za-z0-9]{31}%3D").expect("invalid ENCODED_FLAG_REGEX");
 }
 
 const FLAG_LEN: usize = 31;

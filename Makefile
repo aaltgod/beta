@@ -4,7 +4,7 @@ export
 APP_NAME=beta
 
 .PHONY: run
-run: compose-up build
+run: build
 	@sleep 1
 	$(info "RUN $(APP_NAME)")
 
