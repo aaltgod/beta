@@ -1,20 +1,16 @@
 pub mod cache;
-mod client;
 pub mod config;
 pub mod errors;
 pub mod handlers;
-pub mod helper;
+pub mod helpers;
+pub mod iptables_manager;
 pub mod metrics;
 pub mod metrics_server;
 pub mod server;
-mod server_tests;
-mod traits;
 
-use std::sync::Arc;
-
+use futures::future;
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
-use tokio::join;
 
 extern crate redis;
 
@@ -24,11 +20,12 @@ extern crate log;
 fn print_logo() {
     println!(
         r"
-    ____  _______________
-   / __ )/ ____/_  __/   |
-  / __  / __/   / / / /| |
- / /_/ / /___  / / / ___ |
-/_____/_____/ /_/ /_/  |_|
+        ██╗      █████╗ ███████╗████████╗ ██████╗  ██████╗██╗  ██╗██╗  ██╗ █████╗
+        ██║     ██╔══██╗██╔════╝╚══██╔══╝██╔═══██╗██╔════╝██║  ██║██║ ██╔╝██╔══██╗
+        ██║     ███████║███████╗   ██║   ██║   ██║██║     ███████║█████╔╝ ███████║
+        ██║     ██╔══██║╚════██║   ██║   ██║   ██║██║     ██╔══██║██╔═██╗ ██╔══██║
+        ███████╗██║  ██║███████║   ██║   ╚██████╔╝╚██████╗██║  ██║██║  ██╗██║  ██║
+        ╚══════╝╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
 
 
         Launching!
@@ -41,6 +38,24 @@ async fn main() -> () {
     print_logo();
 
     env_logger::init();
+
+    let flags: Vec<String> = std::env::args().collect();
+
+    let iptables_manager = match iptables_manager::Manager::new() {
+        Ok(res) => res,
+        Err(e) => {
+            error!("couldn't build iptables_manager: {e}");
+            return;
+        }
+    };
+
+    if flags.contains(&"--flush-iptables".to_string()) {
+        match iptables_manager.flush() {
+            Ok(_) => warn!("successfully flushed iptables"),
+            Err(e) => error!("couldn't flush iptables: {e}"),
+        }
+        return;
+    }
 
     let proxy_settings_config = match config::ProxySettingsConfig::new() {
         Ok(res) => res,
@@ -57,6 +72,16 @@ async fn main() -> () {
             return;
         }
     };
+
+    match iptables_manager
+        .watch_for_proxy_settings(secrets_config.proxy_port, proxy_settings_config.clone())
+    {
+        Ok(_) => (),
+        Err(e) => {
+            error!("couldn't start to watch for proxy settings: {e}");
+            return;
+        }
+    }
 
     let redis_client = match redis::Client::open(format!(
         "redis://:{}@{}",
@@ -80,18 +105,20 @@ async fn main() -> () {
         }
     }
 
-    let (_, _) = join!(
-        metrics_server::run(secrets_config.metrics_addr),
-        server::run(
-            secrets_config.proxy_addr,
-            proxy_settings_config,
-            Arc::new(cache::Cache::new(
-                Pool::builder()
-                    .max_open(20)
-                    .build(RedisConnectionManager::new(redis_client)),
-            )),
-            Arc::new(client::Client::new()),
-            Arc::new(helper::Helper::new()),
-        )
-    );
+    future::join_all(vec![
+        tokio::spawn(async move { metrics_server::run(secrets_config.metrics_addr).await }),
+        tokio::spawn(async move {
+            server::run(
+                secrets_config.proxy_addr,
+                proxy_settings_config,
+                cache::Cache::new(
+                    Pool::builder()
+                        .max_open(20)
+                        .build(RedisConnectionManager::new(redis_client)),
+                ),
+            )
+            .await
+        }),
+    ])
+    .await;
 }

@@ -1,63 +1,37 @@
-use std::io::{Read, Write};
+use std::borrow::Cow;
 use std::num::ParseIntError;
-use std::str;
-use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use anyhow::anyhow;
-use bytes::Bytes;
 use http::uri::Scheme;
-use http::HeaderMap;
 use hyper::http::HeaderValue;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server as HTTPServer, Uri};
-use lazy_static::lazy_static;
-use url::form_urlencoded;
+use hyper::{Body, Client, Request, Response, Server as HTTPServer, Uri};
 
+use crate::cache::Cache;
 use crate::config::ProxySettingsConfig;
 use crate::errors::ServerError;
+use crate::helpers;
+use crate::helpers::FLAG_REGEX;
 use crate::metrics::{
     CHANGED_REQUEST_COUNTER, CHANGED_RESPONSE_COUNTER, HANDLED_REQUEST_COUNTER,
     INCOMING_REQUEST_COUNTER, TARGET_SERVICE_STATUS_COUNTER,
 };
-use crate::traits::{FlagsProvider, Sender, Storage};
 
-lazy_static! {
-    pub static ref HEADER_VALUE_URL_ENCODED: HeaderValue =
-        HeaderValue::from_str("application/x-www-form-urlencoded")
-            .expect("invalid HEADER_VALUE_URL_ENCODED");
-}
-
+#[derive(Clone)]
 pub struct Server {
-    config: Arc<RwLock<ProxySettingsConfig>>,
-
-    cache: Arc<dyn Storage + Send + Sync>,
-    client: Arc<dyn Sender + Send + Sync>,
-    flags_provider: Arc<dyn FlagsProvider + Send + Sync>,
+    config: ProxySettingsConfig,
+    cache: Cache,
 }
 
 impl Server {
-    pub fn new(
-        config: Arc<RwLock<ProxySettingsConfig>>,
-        cache: Arc<dyn Storage + Send + Sync>,
-        client: Arc<dyn Sender + Send + Sync>,
-        flags_provider: Arc<dyn FlagsProvider + Send + Sync>,
-    ) -> Self {
-        Server {
-            config,
-            cache,
-            client,
-            flags_provider,
-        }
+    pub fn new(config: ProxySettingsConfig, cache: Cache) -> Self {
+        Server { config, cache }
     }
 
-    async fn process_flag_pair(
-        &self,
-        flag: &str,
-        new_flag: &str,
-        ttl: usize,
-    ) -> Result<(), ServerError> {
+    async fn process_flag_pair(&self, flag: &str, new_flag: &str) -> Result<(), ServerError> {
         self.cache
-            .set_flag(flag, new_flag, ttl)
+            .set_flag(flag.to_string(), new_flag.to_string())
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
@@ -65,14 +39,18 @@ impl Server {
                 error: e.into(),
             })?;
 
+        info!("ok flag - new_flag");
+
         self.cache
-            .set_flag(new_flag, flag, ttl)
+            .set_flag(new_flag.to_string(), flag.to_string())
             .await
             .map_err(|e| ServerError::Changer {
                 method_name: "cache.set_flag".to_string(),
                 description: "couldn't set `new_flag: flag` in cache".to_string(),
                 error: e.into(),
             })?;
+
+        info!("ok new_flag - flag");
 
         Ok(())
     }
@@ -83,6 +61,8 @@ impl Server {
         host: &str,
         scheme: Scheme,
     ) -> Result<(), ServerError> {
+        info!("HOST {}", host);
+
         let changed_uri_builder = Uri::builder().scheme(scheme).authority(host);
 
         let path = match uri.path_and_query() {
@@ -96,58 +76,65 @@ impl Server {
             }
         };
 
-        let mut changed_path = path.to_string();
+        if helpers::contains_flag(path) {
+            info!("TO CHANGE PATH:  {:?}", FLAG_REGEX.clone().captures(path));
 
-        let config = self
-            .config
-            .read()
-            .map_err(|e| ServerError::Changer {
-                method_name: "config.read".to_string(),
-                description: "couldn't read config".to_string(),
-                error: anyhow!("{e}"),
-            })?
-            .clone();
+            let mut changed_path = path.to_string();
 
-        for flag in config.flag_regexp.find_iter(path) {
-            let flag_from_cache =
-                self.cache
-                    .get_flag(flag.as_str())
-                    .await
-                    .map_err(|e| ServerError::Changer {
-                        method_name: "cache.get_flag".to_string(),
-                        description: "couldn't get flag from cache".to_string(),
-                        error: e.into(),
-                    })?;
+            for flag in FLAG_REGEX.clone().find_iter(path) {
+                let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return Err(ServerError::Changer {
+                            method_name: "cache.get_flag".to_string(),
+                            description: "couldn't get flag from cache".to_string(),
+                            error: e.into(),
+                        });
+                    }
+                };
 
-            let pair_flag = if flag_from_cache.len() == 0 {
-                let new_flag = self.flags_provider.build_flag(
-                    &config.flag_alphabet,
-                    flag.len(),
-                    &config.flag_postfix,
-                );
+                info!("GOT FLAG IN PATH {:?}", flag);
 
-                self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
-                    .await
-                    .map_err(|e| ServerError::Changer {
-                        method_name: "process_flag_pair".to_string(),
-                        description: "couldn't process flag pair".to_string(),
-                        error: e.into(),
-                    })?;
+                if flag_from_cache.len() == 0 {
+                    let new_flag = helpers::build_flag(false);
 
-                new_flag
-            } else {
-                flag_from_cache
-            };
+                    self.process_flag_pair(flag.as_str(), new_flag.as_str())
+                        .await
+                        .map_err(|e| ServerError::Changer {
+                            method_name: "process_flag_pair".to_string(),
+                            description: "couldn't process flag pair".to_string(),
+                            error: e.into(),
+                        })?;
 
-            changed_path = config.flag_regexp.replace(path, pair_flag).to_string();
-        }
+                    changed_path = FLAG_REGEX.clone().replace(path, new_flag).to_string();
+                } else {
+                    changed_path = FLAG_REGEX
+                        .clone()
+                        .replace(path, flag_from_cache)
+                        .to_string();
+                }
+
+                info!("CHANGED PATH:  {:?}", changed_path);
+            }
+
+            *uri = changed_uri_builder
+                .path_and_query(changed_path)
+                .build()
+                .map_err(|e| ServerError::Changer {
+                    method_name: "changed_uri.build".to_string(),
+                    description: "couldn't build changed_uri with changed_path".to_string(),
+                    error: e.into(),
+                })?;
+
+            return Ok(());
+        };
 
         *uri = changed_uri_builder
-            .path_and_query(changed_path)
+            .path_and_query(path)
             .build()
             .map_err(|e| ServerError::Changer {
                 method_name: "changed_uri.build".to_string(),
-                description: "couldn't build changed_uri with changed_path".to_string(),
+                description: "couldn't build changed_uri with path".to_string(),
                 error: e.into(),
             })?;
 
@@ -159,7 +146,8 @@ impl Server {
         body: &mut Body,
         encoded: bool,
     ) -> Result<Body, ServerError> {
-        // No check for body length, because it's not necessary for CTF events. kekw
+        warn!("{encoded} {:?}", body);
+
         let body_bytes = hyper::body::to_bytes(body)
             .await
             .map_err(|e| ServerError::Changer {
@@ -168,50 +156,86 @@ impl Server {
                 error: e.into(),
             })?;
 
-        if body_bytes.is_empty() {
-            return Ok(Body::empty());
-        };
+        if !body_bytes.is_empty() {
+            let text_body = std::str::from_utf8(&body_bytes).map_err(|e| ServerError::Changer {
+                method_name: "from_utf8".to_string(),
+                description: "couldn't make body_bytes to str".to_string(),
+                error: e.into(),
+            })?;
 
-        let text_body = std::str::from_utf8(&body_bytes).map_err(|e| ServerError::Changer {
-            method_name: "from_utf8".to_string(),
-            description: "couldn't make body_bytes to str".to_string(),
-            error: e.into(),
-        })?;
+            warn!("TEXT_BODY: {:?}", text_body);
 
-        let mut result_body = text_body.to_string();
+            // TODO: add Full, Empty, Stream
+            let mut chunks: Vec<Result<String, std::io::Error>> = vec![];
 
-        let config = self
-            .config
-            .read()
-            .map_err(|e| ServerError::Changer {
-                method_name: "config.read".to_string(),
-                description: "couldn't read config".to_string(),
-                error: anyhow!("{e}"),
-            })?
-            .clone();
+            if encoded {
+                let pairs = url::form_urlencoded::parse(&body_bytes);
 
-        if encoded {
-            let pairs = url::form_urlencoded::parse(&body_bytes);
+                for (i, (key, value)) in pairs.into_iter().enumerate() {
+                    let mut changed_value = value.to_string();
 
-            for (_i, (_key, value)) in pairs.into_iter().enumerate() {
-                for flag in config.flag_regexp.find_iter(&value) {
-                    let flag_from_cache =
-                        self.cache.get_flag(flag.as_str()).await.map_err(|e| {
-                            ServerError::Changer {
+                    for flag in FLAG_REGEX.clone().find_iter(value.as_ref()) {
+                        let flag_from_cache = self
+                            .cache
+                            .get_flag(flag.as_str().to_string())
+                            .await
+                            .map_err(|e| ServerError::Changer {
                                 method_name: "cache.get_flag".to_string(),
                                 description: "couldn't get flag from cache".to_string(),
                                 error: e.into(),
-                            }
+                            })?;
+
+                        warn!("FLGA : {:?}", flag_from_cache);
+
+                        if flag_from_cache.len() == 0 {
+                            let new_flag = helpers::build_flag(false);
+
+                            self.process_flag_pair(flag.as_str(), new_flag.as_str())
+                                .await
+                                .map_err(|e| ServerError::Changer {
+                                    method_name: "process_flag_pair".to_string(),
+                                    description: "couldn't process flag pair".to_string(),
+                                    error: e.into(),
+                                })?;
+
+                            changed_value = changed_value.replace(flag.as_str(), new_flag.as_str());
+                        } else {
+                            changed_value = changed_value
+                                .replace(flag.as_str(), flag_from_cache.as_str())
+                                .to_string();
+                        }
+                    }
+
+                    let mut pair = format!("{key}={changed_value}");
+                    if i != pairs.count() - 1 {
+                        pair += "="
+                    }
+
+                    chunks.push(Ok(url::form_urlencoded::byte_serialize(pair.as_bytes())
+                        .into_iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<String>>()
+                        .join("")
+                        .to_string()));
+                }
+            } else {
+                let mut result_body = text_body.to_string();
+
+                for flag in FLAG_REGEX.clone().find_iter(text_body) {
+                    let flag_from_cache = self
+                        .cache
+                        .get_flag(flag.as_str().to_string())
+                        .await
+                        .map_err(|e| ServerError::Changer {
+                            method_name: "cache.get_flag".to_string(),
+                            description: "couldn't get flag from cache".to_string(),
+                            error: e.into(),
                         })?;
 
-                    let pair_flag = if flag_from_cache.len() == 0 {
-                        let new_flag = self.flags_provider.build_flag(
-                            &config.flag_alphabet,
-                            flag.len(),
-                            &config.flag_postfix,
-                        );
+                    if flag_from_cache.len() == 0 {
+                        let new_flag = helpers::build_flag(false);
 
-                        self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
+                        self.process_flag_pair(flag.as_str(), new_flag.as_str())
                             .await
                             .map_err(|e| ServerError::Changer {
                                 method_name: "process_flag_pair".to_string(),
@@ -219,305 +243,133 @@ impl Server {
                                 error: e.into(),
                             })?;
 
-                        new_flag
+                        result_body = result_body
+                            .replace(flag.as_str(), new_flag.as_str())
+                            .to_string();
                     } else {
-                        flag_from_cache
+                        result_body = result_body
+                            .replace(flag.as_str(), flag_from_cache.as_str())
+                            .to_string();
+                    }
+
+                    info!("CHANGED REQUEST BODY: {:?}", result_body);
+                }
+
+                chunks.push(Ok(result_body));
+            }
+
+            warn!("CHUNKS {:?}", chunks);
+
+            let stream = futures::stream::iter(chunks);
+
+            warn!("{:?}", stream);
+
+            Ok(Body::wrap_stream(stream))
+        } else {
+            Ok(Body::empty())
+        }
+    }
+
+    async fn change_response_body(&self, body: &mut Body) -> (Result<Body, ServerError>, usize) {
+        let body_bytes = match hyper::body::to_bytes(body).await {
+            Ok(res) => res,
+            Err(e) => {
+                return (
+                    Err(ServerError::Changer {
+                        method_name: "to_bytes".to_string(),
+                        description: "couldn't make body to bytes".to_string(),
+                        error: e.into(),
+                    }),
+                    0,
+                );
+            }
+        };
+
+        if !body_bytes.is_empty() {
+            let body_bytes_length = body_bytes.clone().len();
+            let text_body = match std::str::from_utf8(&body_bytes) {
+                Ok(res) => res,
+                Err(e) => {
+                    return (
+                        Err(ServerError::Changer {
+                            method_name: "from_utf8".to_string(),
+                            description: "couldn't make body_bytes to str".to_string(),
+                            error: e.into(),
+                        }),
+                        0,
+                    );
+                }
+            };
+
+            if helpers::contains_flag(text_body) {
+                info!("TO CHANGE RESPONSE BODY: {:?}", text_body);
+
+                let mut result_body = text_body.to_string();
+
+                for flag in FLAG_REGEX.clone().find_iter(text_body) {
+                    let flag_from_cache = match self.cache.get_flag(flag.as_str().to_string()).await
+                    {
+                        Ok(f) => f,
+                        Err(e) => {
+                            return (
+                                Err(ServerError::Changer {
+                                    method_name: "cache.get_flag".to_string(),
+                                    description: "couldn't get flag from cache".to_string(),
+                                    error: e.into(),
+                                }),
+                                0,
+                            );
+                        }
                     };
 
-                    let encoded_flag_from: String =
-                        form_urlencoded::byte_serialize(flag.as_str().as_bytes()).collect();
-                    let encoded_flag_to: String =
-                        form_urlencoded::byte_serialize(pair_flag.as_bytes()).collect();
-
-                    result_body =
-                        result_body.replace(encoded_flag_from.as_str(), encoded_flag_to.as_str());
+                    if flag_from_cache.len() != 0 {
+                        result_body = result_body
+                            .replace(flag.as_str(), flag_from_cache.as_str())
+                            .to_string();
+                    } else {
+                        warn!("couldn't find flag: {:?}", flag)
+                    }
                 }
+
+                info!("CHANGED RESPONSE BODY: {:?}", result_body);
+
+                let chunks: Vec<Result<_, std::io::Error>> = vec![Ok(result_body.clone())];
+                let stream = futures_util::stream::iter(chunks);
+
+                // TODO: add Full, Empty, Stream
+                return (Ok(Body::wrap_stream(stream)), result_body.len());
             }
+
+            (Ok(Body::from(body_bytes)), body_bytes_length)
         } else {
-            for flag in config.flag_regexp.find_iter(text_body) {
-                let flag_from_cache =
-                    self.cache
-                        .get_flag(flag.as_str())
-                        .await
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "cache.get_flag".to_string(),
-                            description: "couldn't get flag from cache".to_string(),
-                            error: e.into(),
-                        })?;
-
-                let pair_flag = if flag_from_cache.len() == 0 {
-                    let new_flag = self.flags_provider.build_flag(
-                        &config.flag_alphabet,
-                        flag.len(),
-                        &config.flag_postfix,
-                    );
-
-                    self.process_flag_pair(flag.as_str(), new_flag.as_str(), config.flag_ttl)
-                        .await
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "process_flag_pair".to_string(),
-                            description: "couldn't process flag pair".to_string(),
-                            error: e.into(),
-                        })?;
-
-                    new_flag
-                } else {
-                    flag_from_cache
-                };
-
-                result_body = result_body
-                    .replace(flag.as_str(), pair_flag.as_str())
-                    .to_string();
-            }
+            (Ok(Body::empty()), 0)
         }
-
-        Ok(Body::from(result_body))
-    }
-
-    async fn unpack_response_body_bytes(
-        &self,
-        body_bytes: &Bytes,
-        headers: &HeaderMap,
-    ) -> Result<String, ServerError> {
-        let content_encoding = headers.get("Content-Encoding");
-
-        let res_body = match content_encoding {
-            Some(res) => match res.to_str() {
-                Ok(res) => match res {
-                    _ if res.contains("gzip") => {
-                        let mut d = flate2::read::GzDecoder::new(body_bytes.as_ref());
-                        let mut s = String::new();
-
-                        d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
-                            method_name: "read_to_string".to_string(),
-                            description: "couldn't read `gzip` body to string".to_string(),
-                            error: e.into(),
-                        })?;
-
-                        s
-                    }
-                    _ if res.contains("deflate") => {
-                        let mut d = flate2::read::DeflateDecoder::new(body_bytes.as_ref());
-                        let mut s = String::new();
-
-                        d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
-                            method_name: "read_to_string".to_string(),
-                            description: "couldn't read `deflate` body to string".to_string(),
-                            error: e.into(),
-                        })?;
-
-                        s
-                    }
-                    _ => {
-                        return Err(ServerError::Changer {
-                            method_name: "res.to_str".to_string(),
-                            description: "unsupported content encoding".to_string(),
-                            error: anyhow!("unsupported content encoding: {:?}", res),
-                        })
-                    }
-                },
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "res.to_str".to_string(),
-                        description: "couldn't convert header `Content-Encoding` to str"
-                            .to_string(),
-                        error: e.into(),
-                    });
-                }
-            },
-            None => std::str::from_utf8(&body_bytes)
-                .map_err(|e| ServerError::Changer {
-                    method_name: "from_utf8".to_string(),
-                    description: "couldn't make body_bytes to str".to_string(),
-                    error: e.into(),
-                })?
-                .to_string(),
-        };
-
-        Ok(res_body)
-    }
-
-    async fn pack_response_body_str(
-        &self,
-        body: &str,
-        headers: &HeaderMap,
-    ) -> Result<Bytes, ServerError> {
-        let content_encoding = headers.get("Content-Encoding");
-
-        let encoded_body = match content_encoding {
-            Some(res) => match res.to_str() {
-                Ok(res) => match res {
-                    _ if res.contains("gzip") => {
-                        let mut e =
-                            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-
-                        e.write_all(body.as_bytes())
-                            .map_err(|e| ServerError::Changer {
-                                method_name: "write_all".to_string(),
-                                description: "couldn't write body to gzip encoder".to_string(),
-                                error: e.into(),
-                            })?;
-
-                        e.finish().map_err(|e| ServerError::Changer {
-                            method_name: "finish".to_string(),
-                            description: "couldn't finish gzip encoder".to_string(),
-                            error: e.into(),
-                        })?
-                    }
-                    _ if res.contains("deflate") => {
-                        let mut e = flate2::write::DeflateEncoder::new(
-                            Vec::new(),
-                            flate2::Compression::best(),
-                        );
-
-                        e.write_all(body.as_bytes())
-                            .map_err(|e| ServerError::Changer {
-                                method_name: "write_all".to_string(),
-                                description: "couldn't write body to deflate encoder".to_string(),
-                                error: e.into(),
-                            })?;
-
-                        e.finish().map_err(|e| ServerError::Changer {
-                            method_name: "finish".to_string(),
-                            description: "couldn't finish deflate encoder".to_string(),
-                            error: e.into(),
-                        })?
-                    }
-                    _ => {
-                        return Err(ServerError::Changer {
-                            method_name: "res.to_str".to_string(),
-                            description: "unsupported content encoding".to_string(),
-                            error: anyhow!("unsupported content encoding: {res}"),
-                        })
-                    }
-                },
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "res.to_str".to_string(),
-                        description: "couldn't convert header `Content-Encoding` to str"
-                            .to_string(),
-                        error: e.into(),
-                    });
-                }
-            },
-            None => body.as_bytes().to_vec(),
-        };
-
-        Ok(encoded_body.into())
-    }
-
-    async fn change_response_body(
-        &self,
-        body: &mut Body,
-        headers: &HeaderMap,
-    ) -> Result<(Body, usize), ServerError> {
-        let body_bytes = hyper::body::to_bytes(body)
-            .await
-            .map_err(|e| ServerError::Changer {
-                method_name: "to_bytes".to_string(),
-                description: "couldn't make body to bytes".to_string(),
-                error: e.into(),
-            })?;
-
-        if body_bytes.is_empty() {
-            return Ok((Body::empty(), 0));
-        }
-
-        let mut unpacked_body = self
-            .unpack_response_body_bytes(&body_bytes, headers)
-            .await
-            .map_err(|e| ServerError::Changer {
-                method_name: "unpack_response_body_bytes".to_string(),
-                description: "couldn't unpack response body bytes".to_string(),
-                error: e.into(),
-            })?;
-
-        let config = self
-            .config
-            .read()
-            .map_err(|e| ServerError::Changer {
-                method_name: "config.read".to_string(),
-                description: "couldn't read config".to_string(),
-                error: anyhow!("{e}"),
-            })?
-            .clone();
-
-        let url_encoded = headers
-            .get("Content-Type")
-            .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
-
-        if url_encoded {
-            let pairs = url::form_urlencoded::parse(&body_bytes);
-
-            for (_i, (_key, value)) in pairs.into_iter().enumerate() {
-                for flag in config.flag_regexp.find_iter(&value) {
-                    let flag_from_cache =
-                        self.cache.get_flag(flag.as_str()).await.map_err(|e| {
-                            ServerError::Changer {
-                                method_name: "cache.get_flag".to_string(),
-                                description: "couldn't get flag from cache".to_string(),
-                                error: e.into(),
-                            }
-                        })?;
-
-                    let encoded_flag_from: String =
-                        form_urlencoded::byte_serialize(flag.as_str().as_bytes()).collect();
-                    let encoded_flag_to: String =
-                        form_urlencoded::byte_serialize(flag_from_cache.as_bytes()).collect();
-
-                    unpacked_body =
-                        unpacked_body.replace(encoded_flag_from.as_str(), encoded_flag_to.as_str());
-                }
-            }
-        } else {
-            let cloned_body = unpacked_body.clone();
-
-            for flag in config.flag_regexp.find_iter(&cloned_body) {
-                let flag_from_cache =
-                    self.cache
-                        .get_flag(flag.as_str())
-                        .await
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "cache.get_flag".to_string(),
-                            description: "couldn't get flag from cache".to_string(),
-                            error: e.into(),
-                        })?;
-
-                if flag_from_cache.len() != 0 {
-                    unpacked_body = unpacked_body.replace(flag.as_str(), flag_from_cache.as_str())
-                } else {
-                    warn!("couldn't find pair flag for flag: {:?}", flag)
-                }
-            }
-        }
-
-        let packed_body = self
-            .pack_response_body_str(&unpacked_body, headers)
-            .await
-            .map_err(|e| ServerError::Changer {
-                method_name: "pack_response_body_str".to_string(),
-                description: "couldn't pack response body str".to_string(),
-                error: e.into(),
-            })?;
-
-        let packed_body_len = packed_body.len();
-
-        Ok((Body::from(packed_body), packed_body_len))
     }
 
     async fn change_request(&self, req: &mut Request<Body>) -> Result<(), ServerError> {
+        info!("REQ {:?}", req);
+
         let mut headers = req.headers().clone();
         let mut uri = req.uri().clone();
         let body = req.body_mut();
 
-        debug!("change_request: headers {:?}; URI {uri}", &headers);
+        let encoded = headers.get("Content-Type").is_some_and(|h| {
+            h.eq(&HeaderValue::from_str("application/x-www-form-urlencoded").unwrap())
+        });
+
+        let changed_request_body =
+            self.change_request_body(body, encoded)
+                .await
+                .map_err(|e| ServerError::Changer {
+                    method_name: "change_request_body".to_string(),
+                    description: "couldn't change request body".to_string(),
+                    error: e.into(),
+                })?;
+
+        warn!("{:?}", changed_request_body);
 
         let host = match headers.get("host") {
-            Some(res) => res.to_str().map_err(|e| ServerError::Changer {
-                method_name: "res.to_str".to_string(),
-                description: "couldn't convert header `host` to str".to_string(),
-                error: e.into(),
-            })?,
+            Some(res) => res.to_str().unwrap(),
             None => {
                 return Err(ServerError::Changer {
                     method_name: "headers.get".to_string(),
@@ -527,15 +379,7 @@ impl Server {
             }
         };
 
-        let config = self
-            .config
-            .read()
-            .map_err(|e| ServerError::Changer {
-                method_name: "config.read".to_string(),
-                description: "couldn't read config".to_string(),
-                error: anyhow!("{e}"),
-            })?
-            .clone();
+        info!("HOST {}", host);
 
         // try to parse host(ip) with port
         let (changed_host, scheme) = if host.contains(&":") {
@@ -561,7 +405,7 @@ impl Server {
 
             let mut host = String::default();
 
-            for target in config.targets.iter() {
+            for target in self.config.clone().targets().iter() {
                 if port == target.port {
                     host = target.team_host.clone() + ":" + split[1];
 
@@ -576,13 +420,12 @@ impl Server {
                         "couldn't find target when parsing host: {:?}",
                         uri.host()
                     ),
-                    error: anyhow!("no host with port {:?} in config", port),
+                    error: anyhow!("no port with port {:?} in config", port),
                 });
             }
 
             (host, Scheme::HTTP)
         } else {
-            // TODO: add domain processing
             return Err(ServerError::Changer {
                 method_name: "host.contains".to_string(),
                 description: "unexpected host".to_string(),
@@ -598,74 +441,43 @@ impl Server {
                 error: e.into(),
             })?;
 
-        let encoded = headers
-            .get("Content-Type")
-            .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
-
-        let changed_request_body =
-            self.change_request_body(body, encoded)
-                .await
-                .map_err(|e| ServerError::Changer {
-                    method_name: "change_request_body".to_string(),
-                    description: "couldn't change request body".to_string(),
-                    error: e.into(),
-                })?;
+        info!("CHANGED URI {:?}", uri);
 
         headers.insert(
             "host",
-            match HeaderValue::from_str(changed_host.as_str()) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "HeaderValue::from_str".to_string(),
-                        description: "couldn't convert header value for header `host`".to_string(),
-                        error: e.into(),
-                    })
-                }
-            },
+            HeaderValue::from_str(changed_host.as_str()).unwrap(),
         );
 
         *req.body_mut() = changed_request_body;
         *req.uri_mut() = uri;
         *req.headers_mut() = headers;
 
+        info!("CHANGED REQ {:?}", req);
+
         return Ok(());
     }
 
     async fn change_response(&self, resp: &mut Response<Body>) -> Result<(), ServerError> {
+        info!("RESP {:?}", resp);
+
         let mut headers = resp.headers().clone();
-
-        let (changed_response_body, changed_response_body_len) = self
-            .change_response_body(resp.body_mut(), &headers)
-            .await
-            .map_err(|e| ServerError::Changer {
-                method_name: "change_response_body".to_string(),
-                description: "couldn't get changed response body".to_string(),
-                error: e.into(),
-            })?;
-
-        if log::log_enabled!(log::Level::Debug) {
-            debug!("changed_response_body: {:?}", changed_response_body);
-        }
+        let (new_body, new_body_length) = self.change_response_body(resp.body_mut()).await;
+        let new_body = new_body.map_err(|e| ServerError::Changer {
+            method_name: "change_response_body".to_string(),
+            description: "couldn't get new_body".to_string(),
+            error: e.into(),
+        })?;
 
         headers.insert(
-            "Content-Length",
-            match HeaderValue::from_str(changed_response_body_len.to_string().as_str()) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "HeaderValue::from_str".to_string(),
-                        description: String::from(
-                            "couldn't convert header value for header `Content-Length`",
-                        ),
-                        error: e.into(),
-                    })
-                }
-            },
+            hyper::header::CONTENT_LENGTH,
+            // TODO: add error handling(probably)
+            HeaderValue::from_str(new_body_length.to_string().as_str()).unwrap(),
         );
 
-        *resp.body_mut() = changed_response_body;
+        *resp.body_mut() = new_body;
         *resp.headers_mut() = headers;
+
+        info!("CHANGED RESP {:?}", &resp);
 
         Ok(())
     }
@@ -673,9 +485,11 @@ impl Server {
     pub async fn handle_request(&self, req: Request<Body>) -> Result<Response<Body>, ServerError> {
         INCOMING_REQUEST_COUNTER.inc();
 
+        info!("handle_request URI {:?}", req.uri());
+
         let mut req = req;
 
-        // TODO: if change_request returns error, need to skip (original) request above maybe.
+        // TODO: if change_request returns, need to skip (original) request above maybe
         let changed_req = match self.change_request(&mut req).await {
             Ok(_) => {
                 CHANGED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
@@ -713,7 +527,14 @@ impl Server {
             }
         };
 
-        let mut target_service_resp = match self.client.send(changed_req).await {
+        info!("TARGET HOST {}", host);
+
+        let mut target_service_resp = match Client::builder()
+            .pool_idle_timeout(Duration::from_secs(10))
+            .build_http()
+            .request(changed_req)
+            .await
+        {
             Ok(res) => {
                 TARGET_SERVICE_STATUS_COUNTER
                     .with_label_values(&[host, "OK"])
@@ -728,15 +549,11 @@ impl Server {
 
                 return Err(ServerError::Changer {
                     method_name: "request".to_string(),
-                    description: format!("target service with host `{host}` returned error `{e}`"),
+                    description: format!("target service with host `{}` returned `{:?}`", host, e),
                     error: e.into(),
                 });
             }
         };
-
-        if log::log_enabled!(log::Level::Debug) {
-            debug!("target_service_resp: {:?}", target_service_resp);
-        }
 
         match self.change_response(&mut target_service_resp).await {
             Ok(_) => {
@@ -745,7 +562,7 @@ impl Server {
                 Ok(target_service_resp)
             }
             Err(e) => {
-                error!("couldn't change response {e}");
+                error!("couldn't change response {}", e);
 
                 CHANGED_RESPONSE_COUNTER.with_label_values(&["ERROR"]).inc();
 
@@ -754,19 +571,15 @@ impl Server {
         }
     }
 
-    async fn process(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+    async fn process(self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
         match self.handle_request(req).await {
             Ok(res) => {
                 HANDLED_REQUEST_COUNTER.with_label_values(&["OK"]).inc();
 
-                if log::log_enabled!(log::Level::Debug) {
-                    debug!("handle_request res: {:?}", res);
-                }
-
                 Ok(res)
             }
             Err(e) => {
-                error!("couldn't handle request: {e}");
+                error!("couldn't handle request: {}", e);
 
                 HANDLED_REQUEST_COUNTER.with_label_values(&["ERROR"]).inc();
 
@@ -776,34 +589,17 @@ impl Server {
     }
 }
 
-pub async fn run(
-    proxy_addr: String,
-    config: Arc<RwLock<ProxySettingsConfig>>,
-    cache: Arc<dyn Storage + Send + Sync>,
-    client: Arc<dyn Sender + Send + Sync>,
-    flags_provider: Arc<dyn FlagsProvider + Send + Sync>,
-) {
-    let server = Arc::new(Server::new(config, cache, client, flags_provider));
-
-    let make_service = make_service_fn({
-        let server = Arc::clone(&server);
-
-        move |_conn| {
-            let server: Arc<Server> = Arc::clone(&server);
-
-            async move {
-                Ok::<_, hyper::Error>(service_fn(move |req| {
-                    let server = Arc::clone(&server);
-                    async move { server.process(req).await }
-                }))
-            }
-        }
+pub async fn run(proxy_addr: String, config: ProxySettingsConfig, cache: Cache) {
+    let proxy = Server::new(config, cache);
+    let make_service = make_service_fn(move |_| {
+        let p = proxy.clone();
+        async move { Ok::<_, hyper::Error>(service_fn(move |req| p.clone().process(req))) }
     });
 
     let addr = proxy_addr.parse().expect("couldn't parse proxy address");
     let server = HTTPServer::bind(&addr).serve(make_service);
 
-    warn!("start `beta` on address: {addr}");
+    warn!("start proxy on address: {addr}");
 
     if let Err(e) = server.await {
         error!("Fatal proxy error: {e}");

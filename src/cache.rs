@@ -1,10 +1,10 @@
-use async_trait::async_trait;
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
 use redis::{AsyncCommands, RedisError};
 
-use crate::{errors::CacheError, traits::Storage};
+use crate::errors::CacheError;
 
+#[derive(Clone)]
 pub struct Cache {
     pool: Pool<RedisConnectionManager>,
 }
@@ -22,37 +22,42 @@ impl Cache {
     > {
         self.pool.get().await
     }
-}
 
-#[async_trait]
-impl Storage for Cache {
-    async fn set_flag(&self, key: &str, value: &str, ttl: usize) -> Result<(), CacheError> {
+    pub async fn set_flag(&self, key: String, value: String) -> Result<(), CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
         })?;
 
-        conn.set_ex::<_, _, ()>(key, value, ttl)
+        conn.set_nx(key, value)
             .await
             .map_err(|e| CacheError::Cache {
-                method_name: "set_ex".to_string(),
+                method_name: "set_nx".to_string(),
                 error: e.into(),
             })?;
 
         Ok(())
     }
 
-    async fn get_flag(&self, key: &str) -> Result<String, CacheError> {
+    pub async fn get_flag(&self, key: String) -> Result<String, CacheError> {
         let mut conn = self.get_conn().await.map_err(|e| CacheError::Cache {
             method_name: "get_conn".to_string(),
             error: e.into(),
         })?;
 
-        let flag: Option<String> = conn.get(key).await.map_err(|e| CacheError::Cache {
-            method_name: "conn.get".to_string(),
-            error: e.into(),
-        })?;
+        let flag = match conn.get(key).await {
+            Ok(flag) => flag,
+            Err(e) => match e.kind() {
+                redis::ErrorKind::TypeError => "".to_string(),
+                _ => {
+                    return Err(CacheError::Cache {
+                        method_name: "conn.get".to_string(),
+                        error: e.into(),
+                    })
+                }
+            },
+        };
 
-        Ok(flag.map_or(String::from(""), |flag| flag))
+        Ok(flag)
     }
 }

@@ -1,23 +1,12 @@
-services:
-  beta:
-    container_name: beta
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: always
-    ports:
-      - "${PROXY_PORT}:${PROXY_PORT}"
-    depends_on:
-      - redis
-    volumes:
-      - $PWD/config.yaml:/config.yaml
-      - $PWD/.env:/.env
+version: "3.2"
 
+services:
   redis:
-    container_name: redis
     image: "redis:alpine"
     restart: always
+    ports:
+      - "$REDIS_PORT:6379"
     command: redis-server --requirepass $REDIS_PASSWORD
     volumes:
-      - $PWD/redis-data:/var/lib/redis
-      - $PWD/redis.conf:/usr/local/etc/redis/redis.conf
+     - $PWD/redis-data:/var/lib/redis
+     - $PWD/redis.conf:/usr/local/etc/redis/redis.conf
