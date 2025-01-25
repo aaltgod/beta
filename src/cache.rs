@@ -32,7 +32,7 @@ impl Storage for Cache {
             error: e.into(),
         })?;
 
-        conn.set_ex(key, value, ttl)
+        conn.set_ex::<_, _, ()>(key, value, ttl)
             .await
             .map_err(|e| CacheError::Cache {
                 method_name: "set_ex".to_string(),
@@ -48,19 +48,11 @@ impl Storage for Cache {
             error: e.into(),
         })?;
 
-        let flag = match conn.get(key).await {
-            Ok(flag) => flag,
-            Err(e) => match e.kind() {
-                redis::ErrorKind::TypeError => String::from(""),
-                _ => {
-                    return Err(CacheError::Cache {
-                        method_name: "conn.get".to_string(),
-                        error: e.into(),
-                    })
-                }
-            },
-        };
+        let flag: Option<String> = conn.get(key).await.map_err(|e| CacheError::Cache {
+            method_name: "conn.get".to_string(),
+            error: e.into(),
+        })?;
 
-        Ok(flag)
+        Ok(flag.map_or(String::from(""), |flag| flag))
     }
 }
