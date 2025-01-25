@@ -1,10 +1,10 @@
 services:
   service:
     container_name: test-service
-    build: 
+    build:
       context: ./service
       dockerfile: Dockerfile
-  
+
   redis:
     container_name: test-redis
     image: "redis:alpine"
@@ -15,7 +15,7 @@ services:
 
   beta:
     container_name: test-beta
-    build: 
+    build:
       context: ../.
       dockerfile: test.Dockerfile
     # for iptables
@@ -30,7 +30,7 @@ services:
 
   checker:
     container_name: test-checker
-    build: 
+    build:
       context: ./checker
       dockerfile: Dockerfile
     depends_on:

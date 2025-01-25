@@ -12,9 +12,9 @@ mod traits;
 
 use std::sync::Arc;
 
-use futures::future;
 use mobc_redis::mobc::Pool;
 use mobc_redis::RedisConnectionManager;
+use tokio::join;
 
 extern crate redis;
 
@@ -80,22 +80,18 @@ async fn main() -> () {
         }
     }
 
-    future::join_all(vec![
-        tokio::spawn(async move { metrics_server::run(secrets_config.metrics_addr).await }),
-        tokio::spawn(async move {
-            server::run(
-                secrets_config.proxy_addr,
-                proxy_settings_config,
-                Arc::new(cache::Cache::new(
-                    Pool::builder()
-                        .max_open(20)
-                        .build(RedisConnectionManager::new(redis_client)),
-                )),
-                Arc::new(client::Client::new()),
-                Arc::new(helper::Helper::new()),
-            )
-            .await
-        }),
-    ])
-    .await;
+    let (_, _) = join!(
+        metrics_server::run(secrets_config.metrics_addr),
+        server::run(
+            secrets_config.proxy_addr,
+            proxy_settings_config,
+            Arc::new(cache::Cache::new(
+                Pool::builder()
+                    .max_open(20)
+                    .build(RedisConnectionManager::new(redis_client)),
+            )),
+            Arc::new(client::Client::new()),
+            Arc::new(helper::Helper::new()),
+        )
+    );
 }
