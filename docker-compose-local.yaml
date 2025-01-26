@@ -1,7 +1,9 @@
 services:
   beta:
     container_name: beta
-    image: ghcr.io/aaltgod/beta:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: always
     ports:
       - "${PROXY_PORT}:${PROXY_PORT}"
