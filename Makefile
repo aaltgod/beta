@@ -16,18 +16,18 @@ build:
 	cargo build --release
 
 .PHONY:
-clean: compose-down
+clean: compose-down-local
 	$(info "CLEAN")
 	rm -rf bin || true
 
-.PHONY: compose-up
-compose-up:
-	docker compose -p beta -f ./docker-compose.yaml up --build -d
+.PHONY: compose-up-local
+compose-up-local:
+	docker compose -p beta -f ./docker-compose-local.yaml up --build -d
 
-.PHONY: compose-stop
-compose-stop:
-	docker compose -p beta -f ./docker-compose.yaml stop
+.PHONY: compose-stop-local
+compose-stop-local:
+	docker compose -p beta -f ./docker-compose-local.yaml stop
 
-.PHONY: compose-down
-compose-down:
-	docker compose -p beta -f ./docker-compose.yaml down
+.PHONY: compose-down-local
+compose-down-local:
+	docker compose -p beta -f ./docker-compose-local.yaml down
