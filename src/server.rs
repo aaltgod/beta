@@ -598,6 +598,10 @@ impl Server {
                 error: e.into(),
             })?;
 
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("changed_uri: {:?}", uri);
+        }
+
         let encoded = headers
             .get("Content-Type")
             .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
@@ -610,6 +614,10 @@ impl Server {
                     description: "couldn't change request body".to_string(),
                     error: e.into(),
                 })?;
+
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("changed_request_body: {:?}", changed_request_body);
+        }
 
         headers.insert(
             "host",
