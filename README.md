@@ -1,13 +1,13 @@
 # beta
 
-Simple MITM proxy for AD usage.
+Simple proxy for Attack/Defense usage.
 
 ## English | [Русский](https://github.com/aaltgod/beta/blob/master/README_RU.md)
 
 ## Description
 
-- Redirects traffic to the specified address according to the `config.yaml` configuration;
-- Replaces flags in the traffic found by a regular expression and stores them in Redis.
+- Redirects traffic to the specified address of the service (supposed to be patched);
+- Carefully replaces the flags in the traffic so that the checker has a status of OK, while the patched service has dummy flags.
 
 The functionality is graphically represented below:
 

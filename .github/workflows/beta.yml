@@ -1,5 +1,4 @@
 name: beta
-run-name: ${{ github.actor }} is running
 
 on:
   push:
