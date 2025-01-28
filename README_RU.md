@@ -30,4 +30,8 @@ iptables -t nat -A PREROUTING -p tcp --dport 5005 -j REDIRECT --to-port 29220
 
 где `29220` — это порт по умолчанию для `beta`;
 
-- Запустите `docker compose up --build -d`.
+- Запустите
+```sh
+docker compose -f docker-compose.yaml up --build -d
+```
+
