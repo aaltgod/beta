@@ -29,7 +29,7 @@ def send_form(url, flag: str):
 # flags_quantity=1 - default case
 # flags_quantity=2 - test for processing of multiple flags
 # flags_quantity=20 - triggers server-side encoding by sending a large payload, this is for encoding/decoding testing of `beta`
-@pytest.mark.parametrize("flags_quantity,repeats", [(1, 1), (2, 1), (20, 1)])
+@pytest.mark.parametrize("flags_quantity,repeats", [(1, 1), (2, 100), (20, 1000)])
 def test_flag_in_json(flags_quantity, repeats):
     for _ in range(repeats):
         expected_flag = ''.join([generate_flag() for _ in range(flags_quantity)])

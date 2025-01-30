@@ -1,8 +1,4 @@
-FROM rust:1-alpine3.19 as builder
-
-ENV RUSTFLAGS="-C target-feature=-crt-static"
-
-RUN apk add --no-cache musl-dev
+FROM rust:latest
 
 WORKDIR /beta
 
@@ -12,15 +8,17 @@ COPY ./Cargo.lock /beta/Cargo.lock
 COPY ./config.yaml /beta/config.yaml
 COPY ./.env /beta/.env
 
-RUN cargo build --release
-RUN strip target/release/beta   
+COPY ./e2e/config.toml $HOME/.cargo/config.toml
 
-FROM alpine:3.19
+RUN cargo build --profile profiling
+# RUN strip target/release/beta   
 
-RUN apk add --no-cache libgcc iptables
 
-COPY --from=builder /beta/target/release/beta .
+
+RUN apt-get update && apt-get install -y libgcc-11-dev iptables curl
+RUN curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mstange/samply/releases/download/samply-v0.12.0/samply-installer.sh | sh
+RUN echo '1' > /proc/sys/kernel/perf_event_paranoid || true
 
 ENV RUST_LOG=debug
 
-ENTRYPOINT ["sh", "-c", "iptables -t nat -A PREROUTING -p tcp --dport 5000 -j REDIRECT --to-port 29220 && exec ./beta"]
+ENTRYPOINT ["sh", "-c", "iptables -t nat -A PREROUTING -p tcp --dport 5000 -j REDIRECT --to-port 29220 && samply record --save-only -o prof.json -- ./target/profiling/beta"]
