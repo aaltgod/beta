@@ -15,6 +15,7 @@ services:
 
   beta:
     container_name: test-beta
+    privileged: true
     build:
       context: ../.
       dockerfile: test.Dockerfile
@@ -27,6 +28,7 @@ services:
     volumes:
       - $PWD/config.yaml:/config.yaml
       - $PWD/.env:/.env
+      - $PWD/prof.json:/prof.json
 
   checker:
     container_name: test-checker

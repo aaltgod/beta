@@ -2,3 +2,4 @@
 /redis-data
 /redis.conf
 /.idea
+**/prof.json

@@ -13,8 +13,8 @@ run: build
 .PHONY: build
 build:
 	$(info "BUILD")
-	cargo build --release
-
+	cargo build
+	
 .PHONY:
 clean: compose-down-local
 	$(info "CLEAN")
