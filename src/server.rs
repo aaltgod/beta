@@ -1,3 +1,6 @@
+use protobuf::descriptor::FileDescriptorProto;
+use protobuf::reflect::FileDescriptor;
+use std::fs;
 use std::io::{Read, Write};
 use std::num::ParseIntError;
 use std::str;
@@ -335,6 +338,45 @@ impl Server {
         };
 
         Ok(res_body)
+    }
+
+    fn unpack_protobuf_body_bytes(
+        body_bytes: &Bytes,
+        headers: &HeaderMap,
+    ) -> Result<String, ServerError> {
+        // Here we define `.proto` file source, we are not generating rust sources for it.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_file = temp_dir.path().join("example.proto");
+
+        // For now, we need to write files to the disk.
+        fs::write(&temp_file, body_bytes.as_ref()).unwrap();
+
+        // Parse text `.proto` file to `FileDescriptorProto` message.
+        // Note this API is not stable and subject to change.
+        // But binary protos can always be generated manually with `protoc` command.
+        let mut file_descriptor_protos = protobuf_parse::Parser::new()
+            .pure()
+            .includes(&[temp_dir.path().to_path_buf()])
+            .input(&temp_file)
+            .parse_and_typecheck()
+            .unwrap()
+            .file_descriptors;
+
+        // This is our .proto file converted to `FileDescriptorProto` from `descriptor.proto`.
+        let file_descriptor_proto: FileDescriptorProto = file_descriptor_protos.pop().unwrap();
+        // Now this `FileDescriptorProto` initialized for reflective access.
+        let file_descriptor: FileDescriptor =
+            FileDescriptor::new_dynamic(file_descriptor_proto, &[]).unwrap();
+
+        let message_descriptor = file_descriptor
+            .message_by_package_relative_name("Message")
+            .unwrap();
+        let mut message = message_descriptor.new_instance();
+        message.merge_from_bytes_dyn(body_bytes.as_ref()).unwrap();
+
+        info!("message: {:?}", message);
+
+        Ok("".to_string())
     }
 
     async fn pack_response_body_str(
