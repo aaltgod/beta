@@ -7,6 +7,7 @@ mod tests {
 
     use http::Request;
     use mockall::predicate::eq;
+    use protobuf::{descriptor::FileDescriptorProto, reflect::FileDescriptor};
     use regex::Regex;
 
     use crate::{
@@ -32,6 +33,18 @@ mod tests {
         static ref TARGETS: Vec<Target> = vec![Target {
             port: 1337,
             team_host: "10.10.3.10".to_string(),
+            protobuf_request_file_descriptor: FileDescriptor::new_dynamic(
+                FileDescriptorProto::default(),
+                &[]
+            )
+            .unwrap(),
+            protobuf_response_file_descriptor: FileDescriptor::new_dynamic(
+                FileDescriptorProto::default(),
+                &[]
+            )
+            .unwrap(),
+            request_message_name: "".to_string(),
+            response_message_name: "".to_string(),
         }];
     }
 

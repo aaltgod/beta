@@ -1,8 +1,9 @@
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::FileDescriptor;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::num::ParseIntError;
+use std::path::PathBuf;
 use std::str;
 use std::sync::{Arc, RwLock};
 
@@ -345,19 +346,21 @@ impl Server {
         headers: &HeaderMap,
     ) -> Result<String, ServerError> {
         // Here we define `.proto` file source, we are not generating rust sources for it.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_file = temp_dir.path().join("example.proto");
+        let path: PathBuf = "g".into();
+
+        // let temp_dir = tempfile::tempdir().unwrap();
+        // let temp_file = temp_dir.path().join("example.proto");
 
         // For now, we need to write files to the disk.
-        fs::write(&temp_file, body_bytes.as_ref()).unwrap();
+        // fs::write(&temp_file, body_bytes.as_ref()).unwrap();
 
         // Parse text `.proto` file to `FileDescriptorProto` message.
         // Note this API is not stable and subject to change.
         // But binary protos can always be generated manually with `protoc` command.
         let mut file_descriptor_protos = protobuf_parse::Parser::new()
             .pure()
-            .includes(&[temp_dir.path().to_path_buf()])
-            .input(&temp_file)
+            .includes(&[&path])
+            .input(&path)
             .parse_and_typecheck()
             .unwrap()
             .file_descriptors;
