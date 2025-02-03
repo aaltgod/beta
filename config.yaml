@@ -16,5 +16,5 @@ proxy_settings:
   flag_alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
   flag_postfix: "="
   targets:
-    - { team_host: 10.136.179.132, port: 1224 }
+    - { team_host: 10.136.179.132, port: 1224 , protobuf_request_file_path: "request.proto", protobuf_response_file_path: "response.proto", message_name: "Request" }
     - { team_host: 10.136.179.133, port: 5001 }

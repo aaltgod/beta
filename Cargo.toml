@@ -30,3 +30,6 @@ url = "2.4.1"
 async-trait = "0.1.84"
 mockall = "0.13.1"
 flate2 = "1.0.35"
+protobuf = { version = "3.7.1", features = ["with-bytes"] }
+tempfile = "3.16.0"
+protobuf-parse = "3.7.1"
