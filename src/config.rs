@@ -1,10 +1,12 @@
 use lazy_static::lazy_static;
 use anyhow::anyhow;
 
-
+use protobuf::descriptor::FileDescriptorProto;
+use protobuf::reflect::{FileDescriptor, MessageDescriptor};
 use regex::Regex;
 use serde::Deserialize;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::RwLock;
 use std::{
     sync::Arc,
@@ -12,6 +14,16 @@ use std::{
 };
 
 use crate::errors::ConfigError;
+
+const TARGET_EXAMPLE_TEXT: &str = "{ team_host: 127.0.0.1, port: 4554 }";
+const TARGET_EXAMPLE_PROTOBUF: &str = r#"{
+        team_host: 10.136.179.132,
+        port: 1224,
+        protobuf_request_file_path: "request.proto",
+        protobuf_response_file_path: "response.proto",
+        protobuf_request_message_name: "Request",
+        protobuf_response_message_name: "Response",
+      }"#; 
 
 lazy_static! {
     pub static ref ENV_VAR_REGEX: Regex =
@@ -50,6 +62,10 @@ struct ProxySettings {
 struct TargetFromReader {
     port: Option<u32>,
     team_host: Option<String>,
+    protobuf_request_file_path: Option<String>,
+    protobuf_response_file_path: Option<String>,
+    protobuf_request_message_name: Option<String>,
+    protobuf_response_message_name: Option<String>,
 }
 
 /// Config for env variables. It is used to initialize.
@@ -62,13 +78,44 @@ pub struct SecretsConfig {
     pub metrics_addr: String,
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct Target {
+#[derive(Debug, Clone)]
+pub struct TextTarget {
     pub port: u32,
     pub team_host: String,
 }
 
-impl PartialEq for Target {
+
+#[derive(Debug, Clone)]
+pub struct ProtobufTarget {
+    pub port: u32,
+    pub team_host: String,
+    pub protobuf_request_message_descriptor: MessageDescriptor,
+    pub protobuf_response_message_descriptor: MessageDescriptor,
+}
+
+#[derive(Debug, Clone)]
+pub enum Target {
+    Text(TextTarget),
+    Protobuf(ProtobufTarget)
+}  
+
+impl Target {
+    pub fn port(&self) -> u32 {
+        match &self {
+            Target::Text(t) => t.port,
+            Target::Protobuf(t) => t.port,
+        }
+    }
+    
+    pub fn team_host(&self) -> String {
+        match &self {
+            Target::Text(t) => t.team_host.clone(),
+            Target::Protobuf(t) => t.team_host.clone(),
+        }
+    }
+}
+
+impl PartialEq for TextTarget {
     fn eq(&self, other: &Self) -> bool {
         self.port.eq(&other.port) && self.team_host.eq(&other.team_host)
     }
@@ -76,7 +123,7 @@ impl PartialEq for Target {
     fn ne(&self, other: &Self) -> bool {
         self.port.ne(&other.port) || self.team_host.ne(&other.team_host)
     }
-}
+} 
 
 fn get_file_data(path: &str) -> Result<String, ConfigError> {
     let mut data = String::new();
@@ -269,25 +316,10 @@ fn build_proxy_settings_config_data() -> Result<(usize, Regex, String, String, V
             key: "proxy_settings".to_string(),
         })?;
 
-    let targets = proxy_settings
-        .targets
-        .ok_or_else(|| ConfigError::NoKey {
-            key: "targets".to_string(),
-        })?
-        .into_iter()
-        .map(|target| {
-            Ok(Target {
-                port: target.port.ok_or_else(|| ConfigError::NoListElement {
-                    list_name: "targets".to_string(),
-                    element_example: "{ team_host: 127.0.0.1, port: 4554 }".to_string(),
-                })?,
-                team_host: target.team_host.ok_or_else(|| ConfigError::NoListElement {
-                    list_name: "targets".to_string(),
-                    element_example: "{ team_host: 127.0.0.1, port: 4554 }".to_string(),
-                })?,
-            })
-        })
-        .collect::<Result<Vec<_>, ConfigError>>()?;
+    let targets = parse_proxy_settings(&proxy_settings).map_err(|e| ConfigError::Etc {
+        description: "couldn't parse targets".to_string(),
+        error: e.into(),
+    })?;
     
     let flag_ttl = proxy_settings
         .flag_ttl
@@ -331,6 +363,105 @@ fn build_proxy_settings_config_data() -> Result<(usize, Regex, String, String, V
         })?;
 
     Ok((flag_ttl, flag_regexp, flag_alphabet, flag_postfix, targets))
+}
+
+fn parse_proxy_settings(proxy_settings: &ProxySettings) -> Result<Vec<Target>, ConfigError> {
+    proxy_settings
+        .targets
+        .as_ref()
+        .ok_or_else(|| ConfigError::NoKey {
+            key: "targets".to_string(),
+        })?
+        .into_iter()
+        .map(|target| parse_proxy_settings_target(target))
+        .collect::<Result<Vec<_>, ConfigError>>()
+}
+
+fn parse_proxy_settings_target(target_from_reader: &TargetFromReader) -> Result<Target, ConfigError> {
+    if target_from_reader.protobuf_request_file_path.is_some() ||
+    target_from_reader.protobuf_response_file_path.is_some() ||
+    target_from_reader.protobuf_request_message_name.is_some() ||
+    target_from_reader.protobuf_response_message_name.is_some() {
+        let protobuf_request_message_name = target_from_reader.protobuf_request_message_name.clone().ok_or_else(|| ConfigError::NoListElement {
+            list_name: "targets".to_string(),
+            element_example: TARGET_EXAMPLE_PROTOBUF.to_string(),
+        })?;
+
+        let protobuf_response_message_name = target_from_reader.protobuf_response_message_name.clone().ok_or_else(|| ConfigError::NoListElement {
+            list_name: "targets".to_string(),
+            element_example: TARGET_EXAMPLE_PROTOBUF.to_string(),
+        })?;
+
+        Ok(
+            Target::Protobuf(
+                ProtobufTarget {
+                port: target_from_reader.port.ok_or_else(|| ConfigError::NoListElement {
+                    list_name: "targets".to_string(),
+                    element_example: TARGET_EXAMPLE_PROTOBUF.to_string(),
+                })?,
+                team_host: target_from_reader.team_host.clone().ok_or_else(|| ConfigError::NoListElement {
+                    list_name: "targets".to_string(),
+                    element_example: TARGET_EXAMPLE_PROTOBUF.to_string(),
+                })?,
+                protobuf_request_message_descriptor: parse_protobuf_message_descriptor(&protobuf_request_message_name,
+                     target_from_reader
+                     .protobuf_request_file_path
+                     .as_ref()
+                     .ok_or_else(|| ConfigError::NoListElement { list_name: "targets".to_string(), element_example:  TARGET_EXAMPLE_PROTOBUF.to_string() })?)?,
+                protobuf_response_message_descriptor: parse_protobuf_message_descriptor(&protobuf_response_message_name,
+                     target_from_reader
+                     .protobuf_response_file_path
+                     .as_ref()
+                     .ok_or_else(|| ConfigError::NoListElement { list_name: "targets".to_string(), element_example:  TARGET_EXAMPLE_PROTOBUF.to_string() })?)?,
+            }
+        ))
+    } else {
+        Ok(
+            Target::Text(
+                TextTarget{
+                    port: target_from_reader.port.ok_or_else(|| ConfigError::NoListElement {
+                        list_name: "targets".to_string(),
+                        element_example: TARGET_EXAMPLE_TEXT.to_string(),
+                    })?,
+                    team_host: target_from_reader.team_host.clone().ok_or_else(|| ConfigError::NoListElement {
+                        list_name: "targets".to_string(),
+                        element_example: TARGET_EXAMPLE_TEXT.to_string(),
+                    })?,
+                }
+            )
+        )
+    }
+}
+
+fn parse_protobuf_message_descriptor(message_name: &str, file_path: &str) -> Result<MessageDescriptor, ConfigError> {
+    let path: PathBuf = file_path.into();
+    
+    let mut file_descriptors = protobuf_parse::Parser::new().pure()
+         .includes(&[&path])
+         .input(&path)
+         .parse_and_typecheck()
+         .map_err(|e| ConfigError::Etc {
+            description: "couldn't parse protobuf file descriptor".to_string(),
+            error: e.into(),
+         })?
+         .file_descriptors;
+
+    let file_descriptor_proto: FileDescriptorProto = file_descriptors.pop().ok_or_else(|| ConfigError::Etc {
+        description: "couldn't get file descriptor proto".to_string(),
+        error: anyhow!("protobuf file descriptor is empty"),
+    })?;
+
+    let file_descriptor = FileDescriptor::new_dynamic(file_descriptor_proto, &[]).map_err(|e| ConfigError::Etc {
+        description: "couldn't parse protobuf file descriptor".to_string(),
+        error: e.into(),
+    })?;
+
+    let message_descriptor = file_descriptor.message_by_package_relative_name(message_name).ok_or_else(|| ConfigError::Etc {
+        description: "couldn't get message by package relative name".to_string(),
+        error: anyhow!("protobuf file descriptor doesn't contain message with {message_name} name"),
+    })?;
+
+    Ok(message_descriptor)
 }
 
 fn build_envs_from_str(str: &str) -> Result<String, ConfigError> {
