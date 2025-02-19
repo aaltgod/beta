@@ -2,6 +2,11 @@ from flask import Flask, request, jsonify, Response
 from flask_compress import Compress
 import urllib.parse
 import logging
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import request_pb2
 
 app = Flask(__name__)
 Compress(app)
@@ -27,6 +32,14 @@ def echo():
             response_data = urllib.parse.urlencode(data)
             
             return Response(response_data, content_type='application/x-www-form-urlencoded')
+        elif content_type == 'application/octet-stream':
+            data = request.get_data()
+            request_proto = request_pb2.Request()
+            request_proto.ParseFromString(data)
+
+            logging.info(f"PROTO {request_proto}")
+            
+            return request_proto.Serialize
         else:
             logging.info(f"Unsupported Content-Type: {content_type}")
             return jsonify({"error": "Unsupported Content-Type"}), 415 

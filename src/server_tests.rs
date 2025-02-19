@@ -143,7 +143,7 @@ mod tests {
                 .unwrap())
         });
 
-        let proto = "syntax = 'proto3'; message Request { string flag = 1; }";
+        let proto = r#"syntax = "proto3'; message Request { string flag = 1; }"#;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let tempfile = temp_dir.path().join("request.proto");
@@ -446,7 +446,7 @@ mod tests {
         let mut mock_sender = MockSender::default();
         let mock_flags_provider = MockFlagsProvider::default();
 
-        let proto = "syntax = 'proto3'; message Response { string flag = 1; }";
+        let proto = r#"syntax = "proto3"; message Response { string flag = 1; }"#;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let tempfile = temp_dir.path().join("response.proto");
