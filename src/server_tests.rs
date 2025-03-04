@@ -187,8 +187,7 @@ mod tests {
 
         let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
             .handle_request(
-                Request::get(URI_FLAG.clone())
-                    .header("host", HOST.clone())
+                Request::post(URI_FLAG.clone())
                     .body(message.write_to_bytes_dyn().unwrap().into())
                     .unwrap(),
             )
@@ -493,7 +492,7 @@ mod tests {
                 port: 1337,
                 team_host: String::from("10.10.3.10"),
                 protobuf_request_message_descriptor: message_descriptor.clone(),
-                protobuf_response_message_descriptor: message_descriptor,
+                protobuf_response_message_descriptor: message_descriptor.clone(),
             })],
         }));
 
@@ -506,7 +505,6 @@ mod tests {
         let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
             .handle_request(
                 Request::get(URI_FLAG.clone())
-                    .header("host", HOST.clone())
                     .body(hyper::Body::empty())
                     .unwrap(),
             )
@@ -516,7 +514,203 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result_body, format!("flag: \"{}\"", FLAG1.clone()));
+        let mut result_message = message_descriptor.new_instance();
+        result_message.merge_from_bytes_dyn(&result_body).unwrap();
+
+        assert_eq!(
+            result_message.to_string(),
+            format!("flag: \"{}\"", FLAG1.clone())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_gets_flag_deflate_protobuf() {
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mock_flags_provider = MockFlagsProvider::default();
+
+        let proto = "syntax = 'proto3'; message Response { string flag = 1; }";
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tempfile = temp_dir.path().join("response.proto");
+        fs::write(&tempfile, proto).unwrap();
+
+        let mut file_descriptor_protos = protobuf_parse::Parser::new()
+            .pure()
+            .includes(&[temp_dir.path().to_path_buf()])
+            .input(&tempfile)
+            .parse_and_typecheck()
+            .unwrap()
+            .file_descriptors;
+        let file_descriptor_proto: FileDescriptorProto = file_descriptor_protos.pop().unwrap();
+        let file_descriptor: FileDescriptor =
+            FileDescriptor::new_dynamic(file_descriptor_proto, &[]).unwrap();
+        let message_descriptor = file_descriptor
+            .message_by_package_relative_name("Response")
+            .unwrap();
+
+        let mut message = message_descriptor.new_instance();
+        let flag_field = message_descriptor.field_by_name("flag").unwrap();
+        flag_field.set_singular_field(&mut *message, ReflectValueBox::String(FLAG2.clone()));
+
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        e.write_all(message.write_to_bytes_dyn().unwrap().as_slice())
+            .unwrap();
+
+        let encoded_body = e.finish().unwrap();
+        let response_body = hyper::Body::from(encoded_body);
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .header("Content-Coding", "gzip")
+                .status(200)
+                .body(response_body)
+                .unwrap())
+        });
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: vec![Target::Protobuf(ProtobufTarget {
+                port: 1337,
+                team_host: String::from("10.10.3.10"),
+                protobuf_request_message_descriptor: message_descriptor.clone(),
+                protobuf_response_message_descriptor: message_descriptor.clone(),
+            })],
+        }));
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::post(URI_FLAG.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        let result_body = hyper::body::to_bytes(result.unwrap().into_body())
+            .await
+            .unwrap();
+
+        let mut d = flate2::read::GzDecoder::new(result_body.as_ref());
+        let mut decoded_result = String::new();
+        d.read_to_string(&mut decoded_result).unwrap();
+
+        let mut result_message = message_descriptor.new_instance();
+        result_message
+            .merge_from_bytes_dyn(decoded_result.as_bytes())
+            .unwrap();
+
+        assert_eq!(
+            result_message.to_string(),
+            format!("flag: \"{}\"", FLAG1.clone())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_request_success_checker_gets_flag_gzip_protobuf() {
+        let mut mock_storage = MockStorage::default();
+        let mut mock_sender = MockSender::default();
+        let mock_flags_provider = MockFlagsProvider::default();
+
+        let proto = "syntax = 'proto3'; message Response { string flag = 1; }";
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tempfile = temp_dir.path().join("response.proto");
+        fs::write(&tempfile, proto).unwrap();
+
+        let mut file_descriptor_protos = protobuf_parse::Parser::new()
+            .pure()
+            .includes(&[temp_dir.path().to_path_buf()])
+            .input(&tempfile)
+            .parse_and_typecheck()
+            .unwrap()
+            .file_descriptors;
+        let file_descriptor_proto: FileDescriptorProto = file_descriptor_protos.pop().unwrap();
+        let file_descriptor: FileDescriptor =
+            FileDescriptor::new_dynamic(file_descriptor_proto, &[]).unwrap();
+        let message_descriptor = file_descriptor
+            .message_by_package_relative_name("Response")
+            .unwrap();
+
+        let mut message = message_descriptor.new_instance();
+        let flag_field = message_descriptor.field_by_name("flag").unwrap();
+        flag_field.set_singular_field(&mut *message, ReflectValueBox::String(FLAG2.clone()));
+
+        let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        e.write_all(message.write_to_bytes_dyn().unwrap().as_slice())
+            .unwrap();
+
+        let encoded_body = e.finish().unwrap();
+        let response_body = hyper::Body::from(encoded_body);
+
+        mock_sender.expect_send().return_once(|_| {
+            Ok(http::Response::builder()
+                .header("Content-Coding", "deflate")
+                .status(200)
+                .body(response_body)
+                .unwrap())
+        });
+
+        mock_storage
+            .expect_get_flag()
+            .with(eq(FLAG2.clone()))
+            .returning(|_| Ok(FLAG1.clone()));
+
+        let config = Arc::new(RwLock::new(ProxySettingsConfig {
+            flag_ttl: FLAG_TTL,
+            flag_regexp: FLAG_REGEXP.clone(),
+            flag_alphabet: FLAG_ALPHABET.clone(),
+            flag_postfix: FLAG_POSTFIX.clone(),
+            targets: vec![Target::Protobuf(ProtobufTarget {
+                port: 1337,
+                team_host: String::from("10.10.3.10"),
+                protobuf_request_message_descriptor: message_descriptor.clone(),
+                protobuf_response_message_descriptor: message_descriptor.clone(),
+            })],
+        }));
+        let cache = Arc::new(mock_storage);
+        let client = Arc::new(mock_sender);
+        let flags_provider = Arc::new(mock_flags_provider);
+
+        let server = Server::new(config, cache, client, flags_provider);
+
+        let result: Result<http::Response<hyper::Body>, crate::errors::ServerError> = server
+            .handle_request(
+                Request::post(URI_FLAG.clone())
+                    .body(hyper::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+
+        let result_body = hyper::body::to_bytes(result.unwrap().into_body())
+            .await
+            .unwrap();
+
+        let mut d = flate2::read::DeflateDecoder::new(result_body.as_ref());
+        let mut decoded_result = String::new();
+        d.read_to_string(&mut decoded_result).unwrap();
+
+        let mut result_message = message_descriptor.new_instance();
+        result_message
+            .merge_from_bytes_dyn(decoded_result.as_bytes())
+            .unwrap();
+
+        assert_eq!(
+            result_message.to_string(),
+            format!("flag: \"{}\"", FLAG1.clone())
+        );
     }
 
     #[tokio::test]

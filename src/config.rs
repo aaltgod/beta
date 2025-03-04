@@ -60,7 +60,7 @@ struct ProxySettings {
 
 #[derive(Default, Deserialize, Debug, Clone)]
 struct TargetFromReader {
-    port: Option<u32>,
+    port: Option<u16>,
     team_host: Option<String>,
     protobuf_request_file_path: Option<String>,
     protobuf_response_file_path: Option<String>,
@@ -73,21 +73,21 @@ struct TargetFromReader {
 pub struct SecretsConfig {
     pub redis_addr: String,
     pub redis_password: String,
-    pub proxy_port: u32,
+    pub proxy_port: u16,
     pub proxy_addr: String,
     pub metrics_addr: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct TextTarget {
-    pub port: u32,
+    pub port: u16,
     pub team_host: String,
 }
 
 
 #[derive(Debug, Clone)]
 pub struct ProtobufTarget {
-    pub port: u32,
+    pub port: u16,
     pub team_host: String,
     pub protobuf_request_message_descriptor: MessageDescriptor,
     pub protobuf_response_message_descriptor: MessageDescriptor,
@@ -100,7 +100,7 @@ pub enum Target {
 }  
 
 impl Target {
-    pub fn port(&self) -> u32 {
+    pub fn port(&self) -> u16 {
         match &self {
             Target::Text(t) => t.port,
             Target::Protobuf(t) => t.port,
@@ -184,7 +184,7 @@ pub fn build_secrets_config() -> Result<SecretsConfig, ConfigError> {
         proxy_port: match secrets.proxy_port {
             Some(res) => {
                 build_envs_from_str(&res)?
-                    .parse::<u32>()
+                    .parse::<u16>()
                     .map_err(|e| ConfigError::Etc {
                         description: "couldn't parse PROXY_PORT in .env".to_string(),
                         error: e.into(),
