@@ -88,16 +88,14 @@ impl Server {
     ) -> Result<(), ServerError> {
         let changed_uri_builder = Uri::builder().scheme(scheme).authority(host);
 
-        let path = match uri.path_and_query() {
-            Some(res) => res.as_str(),
-            None => {
-                return Err(ServerError::Changer {
-                    method_name: "uri.path_and_query".to_string(),
-                    description: "path is None".to_string(),
-                    error: anyhow!("Path is None"),
-                })
-            }
-        };
+        let path = uri
+            .path_and_query()
+            .ok_or_else(|| ServerError::Changer {
+                method_name: "uri.path_and_query".to_string(),
+                description: "path is None".to_string(),
+                error: anyhow!("Path is None"),
+            })?
+            .as_str();
 
         let mut changed_path = path.to_string();
 
@@ -153,7 +151,7 @@ impl Server {
         &self,
         ctx: &Ctx,
         body: &mut Body,
-        encoded: bool,
+        headers: &HeaderMap,
     ) -> Result<Body, ServerError> {
         // No check for body length, because it's not necessary for CTF events. kekw
         let body_bytes = hyper::body::to_bytes(body)
@@ -183,7 +181,7 @@ impl Server {
         };
 
         let unpacked_body = self
-            .unpack_request_body_bytes(body_type, &body_bytes)
+            .unpack_request_body_bytes(headers, body_type, body_bytes.clone())
             .map_err(|e| ServerError::Changer {
                 method_name: "unpack_request_body_bytes".to_string(),
                 description: "couldn't unpack request body bytes".to_string(),
@@ -192,7 +190,10 @@ impl Server {
 
         let mut result_body = unpacked_body.clone();
 
-        if encoded {
+        if headers
+            .get("Content-Type")
+            .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED)
+        {
             let pairs = url::form_urlencoded::parse(&body_bytes);
 
             for (_i, (_key, value)) in pairs.into_iter().enumerate() {
@@ -282,8 +283,9 @@ impl Server {
 
     fn unpack_request_body_bytes(
         &self,
+        headers: &HeaderMap,
         body_type: BodyType,
-        body_bytes: &Bytes,
+        body_bytes: Bytes,
     ) -> Result<String, ServerError> {
         let req_body = match body_type {
             BodyType::Default => std::str::from_utf8(&body_bytes)
@@ -296,13 +298,20 @@ impl Server {
             BodyType::Protobuf {
                 protobuf_request_message_descriptor: protobuf_request_file_descriptor,
                 protobuf_response_message_descriptor: _,
-            } => self
-                .unpack_protobuf_body_bytes(body_bytes, protobuf_request_file_descriptor)
+            } => {
+                let content_coding = headers.get("Content-Coding");
+
+                self.unpack_protobuf_body_bytes(
+                    protobuf_request_file_descriptor,
+                    content_coding,
+                    body_bytes,
+                )
                 .map_err(|e| ServerError::Changer {
                     method_name: "unpack_protobuf_body_bytes".to_string(),
                     description: "couldn't unpack protobuf body bytes".to_string(),
                     error: e.into(),
-                })?,
+                })?
+            }
         };
 
         Ok(req_body)
@@ -310,167 +319,317 @@ impl Server {
 
     fn unpack_response_body_bytes(
         &self,
-        body_type: BodyType,
-        body_bytes: &Bytes,
         headers: &HeaderMap,
+        body_type: BodyType,
+        body_bytes: Bytes,
     ) -> Result<String, ServerError> {
         let res_body = match body_type {
             BodyType::Default => {
                 let content_encoding = headers.get("Content-Encoding");
 
-                match content_encoding {
-                    Some(res) => match res.to_str() {
-                        Ok(res) => match res {
-                            _ if res.contains("gzip") => {
-                                let mut d = flate2::read::GzDecoder::new(body_bytes.as_ref());
-                                let mut s = String::new();
-
-                                d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
-                                    method_name: "read_to_string".to_string(),
-                                    description: "couldn't read `gzip` body to string".to_string(),
-                                    error: e.into(),
-                                })?;
-
-                                s
-                            }
-                            _ if res.contains("deflate") => {
-                                let mut d = flate2::read::DeflateDecoder::new(body_bytes.as_ref());
-                                let mut s = String::new();
-
-                                d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
-                                    method_name: "read_to_string".to_string(),
-                                    description: "couldn't read `deflate` body to string"
-                                        .to_string(),
-                                    error: e.into(),
-                                })?;
-
-                                s
-                            }
-                            _ => {
-                                return Err(ServerError::Changer {
-                                    method_name: "res.to_str".to_string(),
-                                    description: "unsupported content encoding".to_string(),
-                                    error: anyhow!("unsupported content encoding: {:?}", res),
-                                })
-                            }
-                        },
-                        Err(e) => {
-                            return Err(ServerError::Changer {
-                                method_name: "res.to_str".to_string(),
-                                description: "couldn't convert header `Content-Encoding` to str"
-                                    .to_string(),
-                                error: e.into(),
-                            });
-                        }
-                    },
-                    None => std::str::from_utf8(&body_bytes)
-                        .map_err(|e| ServerError::Changer {
-                            method_name: "from_utf8".to_string(),
-                            description: "couldn't make body_bytes to str".to_string(),
-                            error: e.into(),
-                        })?
-                        .to_string(),
-                }
+                self.unpack_text_body_bytes(content_encoding, body_bytes)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: String::from("unpack_text_body_bytes"),
+                        description: String::from("couldn't unpack text body bytes"),
+                        error: e.into(),
+                    })?
             }
             BodyType::Protobuf {
                 protobuf_request_message_descriptor: _,
                 protobuf_response_message_descriptor,
-            } => self
-                .unpack_protobuf_body_bytes(body_bytes, protobuf_response_message_descriptor)
+            } => {
+                let content_coding = headers.get("Content-Coding");
+
+                self.unpack_protobuf_body_bytes(
+                    protobuf_response_message_descriptor,
+                    content_coding,
+                    body_bytes,
+                )
                 .map_err(|e| ServerError::Changer {
                     method_name: String::from("unpack_protobuf_body_bytes"),
                     description: String::from("couldn't unpack protobuf body bytes"),
                     error: e.into(),
-                })?,
+                })?
+            }
         };
 
         Ok(res_body)
     }
 
+    fn unpack_text_body_bytes(
+        &self,
+        content_encoding_hv: Option<&HeaderValue>,
+        body_bytes: Bytes,
+    ) -> Result<String, ServerError> {
+        let res = match content_encoding_hv {
+            Some(res) => {
+                let header_str = res.to_str().map_err(|e| ServerError::Changer {
+                    method_name: "res.to_str".to_string(),
+                    description: "couldn't convert header `Content-Encoding` to str".to_string(),
+                    error: e.into(),
+                })?;
+
+                self.decode_body(header_str, body_bytes)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "decode_body".to_string(),
+                        description: "couldn't decode body".to_string(),
+                        error: e.into(),
+                    })?
+            }
+            None => std::str::from_utf8(&body_bytes)
+                .map_err(|e| ServerError::Changer {
+                    method_name: "from_utf8".to_string(),
+                    description: "couldn't make body_bytes to str".to_string(),
+                    error: e.into(),
+                })?
+                .to_string(),
+        };
+
+        Ok(res)
+    }
+
     fn unpack_protobuf_body_bytes(
         &self,
-        body_bytes: &Bytes,
         message_descriptor: MessageDescriptor,
+        content_coding: Option<&HeaderValue>,
+        body_bytes: Bytes,
     ) -> Result<String, ServerError> {
+        let bytes_to_merge = match content_coding {
+            Some(res) => {
+                let header_str = res.to_str().map_err(|e| ServerError::Changer {
+                    method_name: "res.to_str".to_string(),
+                    description: "couldn't convert header `Content-Encoding` to str".to_string(),
+                    error: e.into(),
+                })?;
+
+                self.decode_body(header_str, body_bytes)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "decode_body".to_string(),
+                        description: "couldn't decode body".to_string(),
+                        error: e.into(),
+                    })?
+                    .into_bytes()
+            }
+            None => body_bytes.to_vec(),
+        };
+
         let mut message = message_descriptor.new_instance();
         message
-            .merge_from_bytes_dyn(body_bytes.as_ref())
+            .merge_from_bytes_dyn(&bytes_to_merge)
             .map_err(|e| ServerError::Changer {
                 method_name: "merge_from_bytes_dyn".to_string(),
                 description: "couldn't merge from bytes".to_string(),
                 error: e.into(),
             })?;
 
-        Ok(message.to_string())
+        Ok(String::from_utf8_lossy(
+            message
+                .write_to_bytes_dyn()
+                .map_err(|e| ServerError::Changer {
+                    method_name: "write_to_bytes_dyn".to_string(),
+                    description: "couldn't write message to bytes".to_string(),
+                    error: e.into(),
+                })?
+                .as_slice(),
+        )
+        .to_string())
     }
 
-    fn pack_response_body_str(
+    fn pack_response_body_bytes(
         &self,
-        body: &str,
+        body_type: BodyType,
+        body_bytes: Bytes,
         headers: &HeaderMap,
     ) -> Result<Bytes, ServerError> {
-        let content_encoding = headers.get("Content-Encoding");
+        let res = match body_type {
+            BodyType::Default => {
+                let content_encoding_hv = headers.get("Content-Encoding");
 
-        let encoded_body = match content_encoding {
-            Some(res) => match res.to_str() {
-                Ok(res) => match res {
-                    _ if res.contains("gzip") => {
-                        let mut e =
-                            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-
-                        e.write_all(body.as_bytes())
-                            .map_err(|e| ServerError::Changer {
-                                method_name: "write_all".to_string(),
-                                description: "couldn't write body to gzip encoder".to_string(),
-                                error: e.into(),
-                            })?;
-
-                        e.finish().map_err(|e| ServerError::Changer {
-                            method_name: "finish".to_string(),
-                            description: "couldn't finish gzip encoder".to_string(),
-                            error: e.into(),
-                        })?
-                    }
-                    _ if res.contains("deflate") => {
-                        let mut e = flate2::write::DeflateEncoder::new(
-                            Vec::new(),
-                            flate2::Compression::best(),
-                        );
-
-                        e.write_all(body.as_bytes())
-                            .map_err(|e| ServerError::Changer {
-                                method_name: "write_all".to_string(),
-                                description: "couldn't write body to deflate encoder".to_string(),
-                                error: e.into(),
-                            })?;
-
-                        e.finish().map_err(|e| ServerError::Changer {
-                            method_name: "finish".to_string(),
-                            description: "couldn't finish deflate encoder".to_string(),
-                            error: e.into(),
-                        })?
-                    }
-                    _ => {
-                        return Err(ServerError::Changer {
-                            method_name: "res.to_str".to_string(),
-                            description: "unsupported content encoding".to_string(),
-                            error: anyhow!("unsupported content encoding: {res}"),
-                        })
-                    }
-                },
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "res.to_str".to_string(),
-                        description: "couldn't convert header `Content-Encoding` to str"
-                            .to_string(),
+                self.pack_text_response_body_bytes(content_encoding_hv, body_bytes)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "pack_text_response_body_bytes".to_string(),
+                        description: "couldn't pack text response".to_string(),
                         error: e.into(),
-                    });
-                }
-            },
-            None => body.as_bytes().to_vec(),
+                    })?
+            }
+            BodyType::Protobuf {
+                protobuf_request_message_descriptor: _,
+                protobuf_response_message_descriptor,
+            } => {
+                let content_coding_hv = headers.get("Content-Coding");
+
+                self.pack_protobuf_response_body_bytes(
+                    protobuf_response_message_descriptor,
+                    content_coding_hv,
+                    body_bytes,
+                )
+                .map_err(|e| ServerError::Changer {
+                    method_name: "pack_protobuf_response_body_bytes".to_string(),
+                    description: "couldn't pack protobuf response".to_string(),
+                    error: e.into(),
+                })?
+            }
         };
 
-        Ok(encoded_body.into())
+        Ok(res)
+    }
+
+    fn pack_text_response_body_bytes(
+        &self,
+        content_encoding_hv: Option<&HeaderValue>,
+        body: Bytes,
+    ) -> Result<Bytes, ServerError> {
+        let res = match content_encoding_hv {
+            Some(res) => {
+                let header_str = res.to_str().map_err(|e| ServerError::Changer {
+                    method_name: "res.to_str".to_string(),
+                    description: "couldn't convert header `Content-Encoding` to str".to_string(),
+                    error: e.into(),
+                })?;
+
+                self.encode_body(header_str, body)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "encode_body".to_string(),
+                        description: "couldn't encode body".to_string(),
+                        error: e.into(),
+                    })?
+            }
+            None => body,
+        };
+
+        Ok(res)
+    }
+
+    fn pack_protobuf_response_body_bytes(
+        &self,
+        message_descriptor: MessageDescriptor,
+        content_coding_hv: Option<&HeaderValue>,
+        body_bytes: Bytes,
+    ) -> Result<Bytes, ServerError> {
+        let mut message = message_descriptor.new_instance();
+        message
+            .merge_from_bytes_dyn(&body_bytes)
+            .map_err(|e| ServerError::Changer {
+                method_name: "merge_from_bytes_dyn".to_string(),
+                description: "couldn't merge from bytes".to_string(),
+                error: e.into(),
+            })?;
+
+        let message_bytes =
+            Bytes::from(
+                message
+                    .write_to_bytes_dyn()
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "write_to_bytes_dyn".to_string(),
+                        description: "couldn't write message to bytes".to_string(),
+                        error: e.into(),
+                    })?,
+            );
+
+        let res = match content_coding_hv {
+            Some(res) => {
+                let header_str = res.to_str().map_err(|e| ServerError::Changer {
+                    method_name: "res.to_str".to_string(),
+                    description: "couldn't convert header `Content-Encoding` to str".to_string(),
+                    error: e.into(),
+                })?;
+
+                self.encode_body(header_str, message_bytes)
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "encode_body".to_string(),
+                        description: "couldn't encode body".to_string(),
+                        error: e.into(),
+                    })?
+            }
+            None => message_bytes,
+        };
+
+        Ok(res)
+    }
+
+    fn encode_body(&self, content_encoding: &str, body_bytes: Bytes) -> Result<Bytes, ServerError> {
+        let res = match content_encoding {
+            _ if content_encoding.contains("gzip") => {
+                let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+
+                e.write_all(body_bytes.as_ref())
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "write_all".to_string(),
+                        description: "couldn't write body to gzip encoder".to_string(),
+                        error: e.into(),
+                    })?;
+
+                e.finish().map_err(|e| ServerError::Changer {
+                    method_name: "finish".to_string(),
+                    description: "couldn't finish gzip encoder".to_string(),
+                    error: e.into(),
+                })?
+            }
+            _ if content_encoding.contains("deflate") => {
+                let mut e =
+                    flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+
+                e.write_all(body_bytes.as_ref())
+                    .map_err(|e| ServerError::Changer {
+                        method_name: "write_all".to_string(),
+                        description: "couldn't write body to deflate encoder".to_string(),
+                        error: e.into(),
+                    })?;
+
+                e.finish().map_err(|e| ServerError::Changer {
+                    method_name: "finish".to_string(),
+                    description: "couldn't finish deflate encoder".to_string(),
+                    error: e.into(),
+                })?
+            }
+            _ => {
+                return Err(ServerError::Changer {
+                    method_name: "res.to_str".to_string(),
+                    description: "unsupported content encoding".to_string(),
+                    error: anyhow!("unsupported content encoding: {content_encoding}"),
+                })
+            }
+        };
+
+        Ok(Bytes::from(res))
+    }
+
+    fn decode_body(&self, content_encoding: &str, body: Bytes) -> Result<String, ServerError> {
+        let res = match content_encoding {
+            _ if content_encoding.contains("gzip") => {
+                let mut d = flate2::read::GzDecoder::new(body.as_ref());
+                let mut s = String::new();
+
+                d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
+                    method_name: "read_to_string".to_string(),
+                    description: "couldn't read `gzip` body to string".to_string(),
+                    error: e.into(),
+                })?;
+
+                s
+            }
+            _ if content_encoding.contains("deflate") => {
+                let mut d = flate2::read::DeflateDecoder::new(body.as_ref());
+                let mut s = String::new();
+
+                d.read_to_string(&mut s).map_err(|e| ServerError::Changer {
+                    method_name: "read_to_string".to_string(),
+                    description: "couldn't read `deflate` body to string".to_string(),
+                    error: e.into(),
+                })?;
+
+                s
+            }
+            _ => {
+                return Err(ServerError::Changer {
+                    method_name: "".to_string(),
+                    description: "unsupported content encoding".to_string(),
+                    error: anyhow!("unsupported content encoding: {:?}", content_encoding),
+                })
+            }
+        };
+
+        Ok(res)
     }
 
     async fn change_response_body(
@@ -506,7 +665,7 @@ impl Server {
         };
 
         let mut unpacked_body = self
-            .unpack_response_body_bytes(body_type, &body_bytes, headers)
+            .unpack_response_body_bytes(headers, body_type.clone(), body_bytes.clone())
             .map_err(|e| ServerError::Changer {
                 method_name: "unpack_response_body_bytes".to_string(),
                 description: "couldn't unpack response body bytes".to_string(),
@@ -565,10 +724,10 @@ impl Server {
         }
 
         let packed_body = self
-            .pack_response_body_str(&unpacked_body, headers)
+            .pack_response_body_bytes(body_type, Bytes::from(unpacked_body), headers)
             .map_err(|e| ServerError::Changer {
-                method_name: "pack_response_body_str".to_string(),
-                description: "couldn't pack response body str".to_string(),
+                method_name: "pack_response_body_bytes".to_string(),
+                description: "couldn't pack response body bytes".to_string(),
                 error: e.into(),
             })?;
 
@@ -582,9 +741,6 @@ impl Server {
         let mut uri = req.uri().clone();
         let body = req.body_mut();
 
-        debug!("change_request: headers {:?}; URI {uri}", &headers);
-
-        // try to parse host(ip) with port
         let (changed_host, scheme) = {
             (
                 format!(
@@ -608,36 +764,35 @@ impl Server {
             debug!("changed_uri: {:?}", uri);
         }
 
-        let encoded = headers
-            .get("Content-Type")
-            .is_some_and(|h| h == *HEADER_VALUE_URL_ENCODED);
-
-        let changed_request_body =
-            self.change_request_body(ctx, body, encoded)
-                .await
-                .map_err(|e| ServerError::Changer {
-                    method_name: "change_request_body".to_string(),
-                    description: "couldn't change request body".to_string(),
-                    error: e.into(),
-                })?;
+        let changed_request_body = self
+            .change_request_body(ctx, body, &headers)
+            .await
+            .map_err(|e| ServerError::Changer {
+                method_name: "change_request_body".to_string(),
+                description: "couldn't change request body".to_string(),
+                error: e.into(),
+            })?;
 
         if log::log_enabled!(log::Level::Debug) {
             debug!("changed_request_body: {:?}", changed_request_body);
         }
 
-        headers.insert(
-            "host",
-            match HeaderValue::from_str(changed_host.as_str()) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "HeaderValue::from_str".to_string(),
-                        description: "couldn't convert header value for header `host`".to_string(),
-                        error: e.into(),
-                    })
-                }
-            },
-        );
+        match ctx.config.target {
+            Target::Text(_) => {
+                headers.insert(
+                    "host",
+                    HeaderValue::from_str(changed_host.as_str()).map_err(|e| {
+                        ServerError::Changer {
+                            method_name: "HeaderValue::from_str".to_string(),
+                            description: "couldn't convert header value for header `host`"
+                                .to_string(),
+                            error: e.into(),
+                        }
+                    })?,
+                );
+            }
+            _ => {}
+        };
 
         *req.body_mut() = changed_request_body;
         *req.uri_mut() = uri;
@@ -666,21 +821,23 @@ impl Server {
             debug!("changed_response_body: {:?}", changed_response_body);
         }
 
-        headers.insert(
-            "Content-Length",
-            match HeaderValue::from_str(changed_response_body_len.to_string().as_str()) {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(ServerError::Changer {
-                        method_name: "HeaderValue::from_str".to_string(),
-                        description: String::from(
-                            "couldn't convert header value for header `Content-Length`",
-                        ),
-                        error: e.into(),
-                    })
-                }
-            },
-        );
+        match ctx.config.target {
+            Target::Text(_) => {
+                headers.insert(
+                    "Content-Length",
+                    HeaderValue::from_str(changed_response_body_len.to_string().as_str()).map_err(
+                        |e| ServerError::Changer {
+                            method_name: "HeaderValue::from_str".to_string(),
+                            description: String::from(
+                                "couldn't convert header value for header `Content-Length`",
+                            ),
+                            error: e.into(),
+                        },
+                    )?,
+                );
+            }
+            _ => {}
+        }
 
         *resp.body_mut() = changed_response_body;
         *resp.headers_mut() = headers;
@@ -704,64 +861,28 @@ impl Server {
         let headers = req.headers();
         let uri = req.uri();
 
-        let host = match headers.get("host") {
-            Some(res) => res.to_str().map_err(|e| ServerError::Changer {
-                method_name: "res.to_str".to_string(),
-                description: "couldn't convert header `host` to str".to_string(),
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("change_request: headers {:?}; URI {uri}", &headers);
+        }
+
+        let port = self
+            .get_port(headers, uri)
+            .map_err(|e| ServerError::Changer {
+                method_name: String::from("get_port"),
+                description: String::from("couldn't get port"),
                 error: e.into(),
-            })?,
-            None => {
-                return Err(ServerError::Changer {
-                    method_name: "headers.get".to_string(),
-                    description: "couldn't get host".to_string(),
-                    error: anyhow!("Host is None"),
-                });
-            }
-        };
+            })?;
 
         // try to parse host(ip) with port
-        let target = if host.contains(&":") {
-            let split: Vec<&str> = host.split(":").collect();
-
-            if split.len() != 2 {
-                return Err(ServerError::Changer {
-                    method_name: "host.split".to_string(),
-                    description: "host is invalid".to_string(),
-                    error: anyhow!("Host is invalid: {:?}", host),
-                });
-            }
-
-            let port: u32 =
-                split[1]
-                    .trim()
-                    .parse()
-                    .map_err(|e: ParseIntError| ServerError::Changer {
-                        method_name: "split.parse".to_string(),
-                        description: "couldn't parse port".to_string(),
-                        error: e.into(),
-                    })?;
-
-            let target = config
-                .targets
-                .iter()
-                .find(|t| t.port().eq(&port))
-                .ok_or_else(|| ServerError::Changer {
-                    method_name: "targets".to_string(),
-                    description: format!(
-                        "couldn't find target when parsing host: {:?}",
-                        uri.host()
-                    ),
-                    error: anyhow!("no host with port {:?} in config", port),
-                })?;
-            target
-        } else {
-            // TODO: add domain(example.rs) processing
-            return Err(ServerError::Changer {
-                method_name: "host.contains".to_string(),
-                description: "unexpected host".to_string(),
-                error: anyhow!("unexpected host: {:?}", uri.host()),
-            });
-        };
+        let target = config
+            .targets
+            .iter()
+            .find(|t| t.port().eq(&port))
+            .ok_or_else(|| ServerError::Changer {
+                method_name: "targets".to_string(),
+                description: format!("couldn't find target while parsing host: {:?}", uri.host()),
+                error: anyhow!("no host with port {:?} in config", port),
+            })?;
 
         let ctx = Ctx {
             config: Config {
@@ -793,37 +914,19 @@ impl Server {
             }
         };
 
-        let changed_req_headers = changed_req.headers().clone();
-
-        let changed_req_host = match changed_req_headers.get("host") {
-            Some(res) => res.to_str().map_err(|e| ServerError::Changer {
-                method_name: "res.to_str".to_string(),
-                description: format!("couldn't parse host: `{:?}`", res),
-                error: e.into(),
-            })?,
-            None => {
-                return Err(ServerError::Changer {
-                    method_name: "changed_req_headers.get".to_string(),
-                    description: format!(
-                        "couldn't get host from changed_req_headers: `{:?}`",
-                        changed_req_headers
-                    ),
-                    error: anyhow!("Host is None"),
-                });
-            }
-        };
+        let changed_req_host = ctx.config.target.team_host();
 
         let mut target_service_resp = match self.client.send(changed_req).await {
             Ok(res) => {
                 TARGET_SERVICE_STATUS_COUNTER
-                    .with_label_values(&[changed_req_host, "OK"])
+                    .with_label_values(&[changed_req_host.as_str(), "OK"])
                     .inc();
 
                 res
             }
             Err(e) => {
                 TARGET_SERVICE_STATUS_COUNTER
-                    .with_label_values(&[changed_req_host, "ERROR"])
+                    .with_label_values(&[changed_req_host.as_str(), "ERROR"])
                     .inc();
 
                 return Err(ServerError::Changer {
@@ -856,6 +959,70 @@ impl Server {
                 });
             }
         }
+    }
+
+    fn get_port(&self, headers: &HeaderMap, uri: &Uri) -> Result<u16, ServerError> {
+        let port = {
+            if headers.contains_key("host") {
+                match headers.get("host") {
+                    Some(res) => {
+                        let host = res.to_str().map_err(|e| ServerError::Changer {
+                            method_name: "res.to_str".to_string(),
+                            description: "couldn't convert header `host` to str".to_string(),
+                            error: e.into(),
+                        })?;
+
+                        if host.contains(&":") {
+                            let split: Vec<&str> = host.split(":").collect();
+
+                            if split.len() != 2 {
+                                return Err(ServerError::Changer {
+                                    method_name: "host.split".to_string(),
+                                    description: "host is invalid".to_string(),
+                                    error: anyhow!("Host is invalid: {:?}", host),
+                                });
+                            }
+
+                            let port: u16 =
+                                split[1].trim().parse().map_err(|e: ParseIntError| {
+                                    ServerError::Changer {
+                                        method_name: "split.parse".to_string(),
+                                        description: "couldn't parse port".to_string(),
+                                        error: e.into(),
+                                    }
+                                })?;
+
+                            port
+                        } else {
+                            // TODO: add domain(example.rs) processing
+                            return Err(ServerError::Changer {
+                                method_name: "host.contains".to_string(),
+                                description: "unexpected host".to_string(),
+                                error: anyhow!("unexpected host: {:?}", uri.host()),
+                            });
+                        }
+                    }
+                    None => {
+                        return Err(ServerError::Changer {
+                            method_name: "headers.get".to_string(),
+                            description: "couldn't get host".to_string(),
+                            error: anyhow!("Host is None"),
+                        });
+                    }
+                }
+            } else {
+                // probably there is protobuf message, so we try to find port in URI
+                let port = uri.port_u16().ok_or_else(|| ServerError::Changer {
+                    method_name: String::from("port"),
+                    description: String::from("no port found"),
+                    error: anyhow!("no port found"),
+                })?;
+
+                port
+            }
+        };
+
+        Ok(port)
     }
 
     async fn process(&self, req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
@@ -914,7 +1081,7 @@ pub async fn run(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum BodyType {
     Default,
     Protobuf {
