@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod changer;
 mod client;
 pub mod config;
 pub mod errors;
