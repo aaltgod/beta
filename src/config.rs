@@ -262,7 +262,7 @@ impl ProxySettingsConfig {
     }
 
     fn watch(config: Arc<RwLock<Self>>) {
-        thread::spawn(move || loop {
+        tokio::task::spawn_blocking(move || loop {
             thread::sleep(std::time::Duration::from_secs(5));
 
             let mut config = match config.write() {
@@ -297,7 +297,6 @@ impl ProxySettingsConfig {
             config.flag_alphabet = new_flag_alphabet;
             config.flag_postfix = new_flag_postfix;
             config.targets = new_targets;
-
         });
     }
 }
