@@ -8,3 +8,8 @@ compose-up:
 .PHONY: compose-down
 compose-down:
 	docker compose down
+
+.PHONY: gen
+gen:
+	@echo "Generating code..."
+	protoc --python_out=client
