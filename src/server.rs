@@ -739,6 +739,9 @@ impl Server {
     async fn change_request(&self, ctx: &Ctx, req: &mut Request<Body>) -> Result<(), ServerError> {
         let mut headers = req.headers().clone();
         let mut uri = req.uri().clone();
+
+        warn!("URI {uri}");
+
         let body = req.body_mut();
 
         let (changed_host, scheme) = {
